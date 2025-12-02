@@ -11,7 +11,7 @@
 
 <body>
     <div style="display: flex; justify-content: center;">
-        <canvas id="my-canvas" width="512" height="512"></canvas>
+        <canvas id="my-canvas"></canvas>
     </div>
 
     <div style="margin-top: 10px; display: flex; gap: 10px; justify-content: center;">
@@ -21,7 +21,22 @@
             <option value="Tree">Tree</option>
         </select>
         <button id="OrbitToggle">Orbit on/off</button>
+        <select id="Environment">
+            <option value="Autumn">Autum</option>
+            <option value="Brightday">Bright Day</option>
+            <option value="CloudyHills">Cloudy Hills</option>
+            <option value="GreenHill">Green Hill</option>
+            <option value="Terrain">Terrain</option>
+        </select>
     </div>
+
+    <script>
+        window.addEventListener('load', function() {
+            const canvas = document.getElementById('my-canvas');
+            canvas.width = window.innerHeight / 1.5;
+            canvas.height = window.innerHeight / 1.5;
+        });
+    </script>
 </body>
 
 </html>
