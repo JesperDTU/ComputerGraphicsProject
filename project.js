@@ -299,7 +299,7 @@ async function main()
     // --- Orbiting setup ---
     let alpha = 0.0;
     const radius = 3.0;
-    let angularSpeed = 0.01;
+    let angularSpeed = 0.005;
 
 
 
