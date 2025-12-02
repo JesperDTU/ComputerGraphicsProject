@@ -101,7 +101,8 @@ async function main()
     const objectMap = {
         'monkey_with_hat': 'monkey_with_hat.obj',
         'Tree': 'Tree.obj',
-        // Example: 'bunny': 'bunny.obj',
+        'Statue': 'Statue.obj',
+
     };
     const objFile = objectMap[selectedObject] || (selectedObject + '.obj');
     const mesh = await readOBJFile(objFile, 1.0, false);
@@ -157,7 +158,7 @@ async function main()
     const objectParams = {
         'monkey_with_hat': { scale: 0.5, yOffset: -0.3 },
         'Tree': { scale: 1, yOffset: -0.2 },
-        // Example: 'bunny': { scale: 1.2, yOffset: -0.4 },
+        'Statue': { scale: 0.6, yOffset: -0.9 },
     };
     const params = objectParams[selectedObject] || { scale: 1.0, yOffset: -0.6 };
     const M = mult(translate(0.0, params.yOffset, 0.0), scalem(params.scale, params.scale, params.scale));
