@@ -1,5 +1,13 @@
 "use strict";
-window.onload = function() { main(); }
+window.onload = function() {
+    // Restore previously chosen object (if any) so a reload keeps the selection
+    const sel = document.getElementById('objectSelect');
+    const saved = window.localStorage.getItem('selectedObject');
+    if (sel && saved) {
+        try { sel.value = saved; } catch (e) { /* ignore if option not present */ }
+    }
+    main();
+}
 // Helper to load an image file into a WebGPU 2D texture
 async function loadTexture(device, url) {
     const response = await fetch(url);
@@ -89,8 +97,13 @@ async function main()
     // Read selection from HTML (default to monkey_with_hat)
     const selElem = document.getElementById('objectSelect');
     const selectedObject = selElem ? selElem.value : 'monkey_with_hat';
-    // Map selection to file name
-    const objFile = (selectedObject === 'Tree') ? 'Tree.obj' : 'monkey_with_hat.obj';
+    // Map selection to file name. Add new entries here to support more objects.
+    const objectMap = {
+        'monkey_with_hat': 'monkey_with_hat.obj',
+        'Tree': 'Tree.obj',
+        // Example: 'bunny': 'bunny.obj',
+    };
+    const objFile = objectMap[selectedObject] || (selectedObject + '.obj');
     const mesh = await readOBJFile(objFile, 1.0, false);
 
     // mesh.vertices and mesh.normals are Float32Array with 4 floats per vertex
@@ -140,16 +153,14 @@ async function main()
     // Define the Model matrix (manipulations)
     // Choose per-object model transform so objects are centered/visible
     // (scale first, then translate: translate * scale)
-    let modelScale = 1.0;
-    let modelYOffset = -0.6;
-    if (selectedObject === 'Tree') {
-        modelScale = 0.5;
-        modelYOffset = -0.2;
-    } else if (selectedObject === 'monkey_with_hat') {
-        modelScale = 0.9;
-        modelYOffset = -0.6;
-    }
-    const M = mult(translate(0.0, modelYOffset, 0.0), scalem(modelScale, modelScale, modelScale));
+    // Per-object visual adjustments (scale/offset). Extend to support more objects.
+    const objectParams = {
+        'monkey_with_hat': { scale: 0.5, yOffset: -0.3 },
+        'Tree': { scale: 1, yOffset: -0.2 },
+        // Example: 'bunny': { scale: 1.2, yOffset: -0.4 },
+    };
+    const params = objectParams[selectedObject] || { scale: 1.0, yOffset: -0.6 };
+    const M = mult(translate(0.0, params.yOffset, 0.0), scalem(params.scale, params.scale, params.scale));
 
     // Define view matrix (isometric view)
     const eye = vec3(0, 0, 3);
@@ -513,9 +524,12 @@ async function main()
      document.getElementById("OrbitToggle").onclick = () => {
          orbitOn = !orbitOn;
      };
-    // If user changes selection, reload the page to reinitialize with new model
+    // If user changes selection, save it and reload the page to reinitialize with new model
     if (selElem) {
-        selElem.onchange = () => { window.location.reload(); };
+        selElem.onchange = () => {
+            try { window.localStorage.setItem('selectedObject', selElem.value); } catch (e) { }
+            window.location.reload();
+        };
     }
     draw();
     requestAnimationFrame(animate);
