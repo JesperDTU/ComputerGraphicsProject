@@ -104,6 +104,9 @@ async function main()
         'monkey_with_hat': 'monkey_with_hat.obj',
         'Tree': 'Tree.obj',
         'Bunny': 'bunny.obj',
+        'Donut': 'donut.obj',
+        'Cube': 'Cube.obj',
+        'Sphere': 'Sphere.obj',
     };
     const objFile = objectMap[selectedObject] || (selectedObject ? (selectedObject + '.obj') : 'monkey_with_hat.obj');
     const mesh = await readOBJFile(objFile, 1.0, false);
@@ -158,7 +161,10 @@ async function main()
     const objectParams = {
         'monkey_with_hat': { scale: 0.5, yOffset: -0.3 },
         'Tree': { scale: 1, yOffset: -0.2 },
-        'Bunny': { scale: 2.5, yOffset: -0.6 },
+        'Bunny': { scale: 0.5, yOffset: -0.5 },
+        'Donut': { scale: 0.7, yOffset: 0.0 },
+        'Cube': { scale: 0.2, yOffset: 0.0 },
+        'Sphere': { scale: 0.5, yOffset: 0.0 },
     };
     const params = objectParams[selectedObject] || { scale: 1.0, yOffset: -0.6 };
     const M = mult(translate(0.0, params.yOffset, 0.0), scalem(params.scale, params.scale, params.scale));
@@ -291,7 +297,7 @@ async function main()
 
 
     // --- Orbiting setup ---
-    let orbitOn = false;
+    let orbitOn = true;
     let alpha = 0.0;
     const radius = 3.0;
     const angularSpeed = 0.01;
