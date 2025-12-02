@@ -96,17 +96,17 @@ async function main()
     // --- Load OBJ model ---
     // Read selection from HTML (default to monkey_with_hat)
     const selElem = document.getElementById('objectSelect');
-    const selectedObject = selElem ? selElem.value : 'monkey_with_hat';
+    // If the select exists but its value is empty (possible via saved localStorage),
+    // fall back to the default object name so we don't end up with ".obj".
+    const selectedObject = (selElem && selElem.value) ? selElem.value : 'monkey_with_hat';
     // Map selection to file name. Add new entries here to support more objects.
     const objectMap = {
         'monkey_with_hat': 'monkey_with_hat.obj',
         'Tree': 'Tree.obj',
-        'Statue': 'Statue.obj',
-
+        'Bunny': 'bunny.obj',
     };
-    const objFile = objectMap[selectedObject] || (selectedObject + '.obj');
+    const objFile = objectMap[selectedObject] || (selectedObject ? (selectedObject + '.obj') : 'monkey_with_hat.obj');
     const mesh = await readOBJFile(objFile, 1.0, false);
-
     // mesh.vertices and mesh.normals are Float32Array with 4 floats per vertex
     const numVertices = mesh.vertices.length / 4;
 
@@ -158,7 +158,7 @@ async function main()
     const objectParams = {
         'monkey_with_hat': { scale: 0.5, yOffset: -0.3 },
         'Tree': { scale: 1, yOffset: -0.2 },
-        'Statue': { scale: 0.6, yOffset: -0.9 },
+        'Bunny': { scale: 2.5, yOffset: -0.6 },
     };
     const params = objectParams[selectedObject] || { scale: 1.0, yOffset: -0.6 };
     const M = mult(translate(0.0, params.yOffset, 0.0), scalem(params.scale, params.scale, params.scale));
