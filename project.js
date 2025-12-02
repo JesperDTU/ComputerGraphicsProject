@@ -58,10 +58,10 @@ async function loadCubeTexture(device, urls) {
     // copy each face into the corresponding array layer
     for (let i = 0; i < imgs.length; ++i) {
         device.queue.copyExternalImageToTexture(
-            { source: imgs[i], flipY: true },
+            { source: imgs[i], flipY: false },
             { texture: texture, origin: { x: 0, y: 0, z: i } },
             { width: w, height: h, depthOrArrayLayers: 1 }
-        );
+        );  
     }
 
     return texture;
@@ -351,24 +351,76 @@ async function main()
 
 
     // --- Load cubemap and create sampler ---
-    const cubemap = [
-        'textures/cm_left.png',   // POSITIVE_X
-        'textures/cm_right.png',  // NEGATIVE_X
-        'textures/cm_top.png',    // POSITIVE_Y
-        'textures/cm_bottom.png', // NEGATIVE_Y
-        'textures/cm_back.png',   // POSITIVE_Z
-        'textures/cm_front.png'   // NEGATIVE_Z
-    ];
+    // We'll load the cubemap based on the `#Environment` select value.
+    let CubeTexture = null;
+    let CubeSampler = null;
+    let quadBindGroup = null;
+    let objectBindGroup = null;
 
-    const CubeTexture = await loadCubeTexture(device, cubemap);
-    const CubeSampler = device.createSampler({
-        addressModeU: 'clamp-to-edge',
-        addressModeV: 'clamp-to-edge',
-        addressModeW: 'clamp-to-edge',
-        magFilter: 'linear',
-        minFilter: 'linear',
-        mipmapFilter: 'nearest',
-    });
+    function getCubemapFolderForEnv(env) {
+        // Map the HTML select values to folder names under `cubemaps/`
+        const map = {
+            'Autumn': 'autumn_cubemap',
+            'Brightday': 'brightday2_cubemap',
+            'CloudyHills': 'cloudyhills_cubemap',
+            'GreenHill': 'greenhill_cubemap',
+            'Terrain': 'terrain_cubemap',
+        };
+        return map[env] || 'autumn_cubemap';
+    }
+
+    function makeCubemapURLs(folder) {
+        // derive base name from folder (remove trailing '_cubemap')
+        const base = folder.replace(/_cubemap$/i, '');
+        // Most folders use PNG, but cloudyhills uses JPG. Hardcode by folder.
+        const ext = (folder === 'cloudyhills_cubemap') ? 'jpg' : 'png';
+        return [
+            `cubemaps/${folder}/${base}_posx.${ext}`,
+            `cubemaps/${folder}/${base}_negx.${ext}`,
+            `cubemaps/${folder}/${base}_posy.${ext}`,
+            `cubemaps/${folder}/${base}_negy.${ext}`,
+            `cubemaps/${folder}/${base}_posz.${ext}`,
+            `cubemaps/${folder}/${base}_negz.${ext}`,
+        ];
+    }
+
+    async function updateEnvironment(env) {
+        const folder = getCubemapFolderForEnv(env);
+        const urls = makeCubemapURLs(folder);
+        // load the 6 faces into a cube texture
+        const tex = await loadCubeTexture(device, urls);
+        CubeTexture = tex;
+        CubeSampler = device.createSampler({
+            addressModeU: 'clamp-to-edge',
+            addressModeV: 'clamp-to-edge',
+            addressModeW: 'clamp-to-edge',
+            magFilter: 'linear',
+            minFilter: 'linear',
+            mipmapFilter: 'nearest',
+        });
+        // recreate bind groups to point at the new cubemap texture
+        // layout0, NormalSampler and NormalTexture are in scope below (they will be created before first call)
+        quadBindGroup = device.createBindGroup({
+            layout: layout0,
+            entries: [
+                { binding: 0, resource: { buffer: quadUniformBuffer } },
+                { binding: 1, resource: CubeSampler },
+                { binding: 2, resource: CubeTexture.createView({ dimension: 'cube' }) },
+                { binding: 3, resource: NormalSampler },
+                { binding: 4, resource: NormalTexture.createView() },
+            ]
+        });
+        objectBindGroup = device.createBindGroup({
+            layout: layout0,
+            entries: [
+                { binding: 0, resource: { buffer: objectUniformBuffer } },
+                { binding: 1, resource: CubeSampler },
+                { binding: 2, resource: CubeTexture.createView({ dimension: 'cube' }) },
+                { binding: 3, resource: NormalSampler },
+                { binding: 4, resource: NormalTexture.createView() },
+            ]
+        });
+    }
 
     // --- Create a neutral (flat) normal texture so the surface is smooth ---
     // This replaces the normal map to remove bumpiness. The pixel value
@@ -396,26 +448,15 @@ async function main()
 
     // --- Two bind groups: one for background quad, one for object ---
     const layout0 = bindGroupLayout0;
-    const quadBindGroup = device.createBindGroup({
-        layout: layout0,
-        entries: [
-            { binding: 0, resource: { buffer: quadUniformBuffer } },
-            { binding: 1, resource: CubeSampler },
-            { binding: 2, resource: CubeTexture.createView({ dimension: 'cube' }) },
-            { binding: 3, resource: NormalSampler },
-            { binding: 4, resource: NormalTexture.createView() },
-        ]
-    });
-    const objectBindGroup = device.createBindGroup({
-        layout: layout0,
-        entries: [
-            { binding: 0, resource: { buffer: objectUniformBuffer } },
-            { binding: 1, resource: CubeSampler },
-            { binding: 2, resource: CubeTexture.createView({ dimension: 'cube' }) },
-            { binding: 3, resource: NormalSampler },
-            { binding: 4, resource: NormalTexture.createView() },
-        ]
-    });
+    // Load the initial environment and create bind groups. When the user
+    // changes the `#Environment` select, `updateEnvironment` will be called
+    // to recreate the bind groups with the new cubemap.
+    const envSelect = document.getElementById('Environment');
+    const initialEnv = envSelect ? envSelect.value : 'Autumn';
+    await updateEnvironment(initialEnv);
+    if (envSelect) {
+        envSelect.onchange = () => { updateEnvironment(envSelect.value); };
+    }
 
 
     // --- Clip-space quad placed near far plane (z = 0.999) ---
