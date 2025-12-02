@@ -300,6 +300,9 @@ async function main()
     let alpha = 0.0;
     const radius = 3.0;
     let angularSpeed = 0.005;
+    // orbit mode: true => camera orbits (existing behavior),
+    // false => camera stays still and object orbits around origin
+    let orbitCamera = true;
 
 
 
@@ -532,39 +535,64 @@ async function main()
     function animate() {
     if (angularSpeed !== 0) {
          alpha += angularSpeed;
-         const eye = vec3(radius * Math.sin(alpha), 0, radius * Math.cos(alpha));
-         const at = vec3(0, 0, 0);
-         const up = vec3(0, 1, 0);
-         const Vnew = lookAt(eye, at, up);
-         const newMVP = mult(Mst, mult(P, mult(Vnew, M)));
-         // update object MVP
-        const eyeModelNew = mult(invM, vec4(eye[0], eye[1], eye[2], 1.0));
-        const objectUpdate = new Float32Array([
-            ...flatten(newMVP),
-            ...flatten(identityMat), // invProj = identity for object
-            ...flatten(identityMat), // invViewRot = identity for object
-            projF,
-            aspectUniform,
-            0.0,
-            0.0,
-            ...flatten(eyeModelNew),  // eyePos (model-space)
-            1.0, 0.0, 0.0, 0.0        // reflective = true
-        ]);
-        device.queue.writeBuffer(objectUniformBuffer, 0, objectUpdate);
-        // update quad mtex (camera rotation inverse * invProjFull)
-        const invViewRotNew = invViewRotation(Vnew);
-        const quadUpdate = new Float32Array([
-            ...flatten(identityMat),
-            ...flatten(invProjFull),
-            ...flatten(invViewRotNew),
-            projFQuad,
-            aspectUniform,
-            1.0,
-            0.0,
-            eye[0], eye[1], eye[2], 1.0, // eyePos (world-space)
-            0.0, 0.0, 0.0, 0.0           // reflective = false
-        ]);
-        device.queue.writeBuffer(quadUniformBuffer, 0, quadUpdate);
+         if (orbitCamera) {
+             // Camera orbits around the origin (existing behavior)
+             const eye = vec3(radius * Math.sin(alpha), 0, radius * Math.cos(alpha));
+             const at = vec3(0, 0, 0);
+             const up = vec3(0, 1, 0);
+             const Vnew = lookAt(eye, at, up);
+             const newMVP = mult(Mst, mult(P, mult(Vnew, M)));
+             // update object MVP
+            const eyeModelNew = mult(invM, vec4(eye[0], eye[1], eye[2], 1.0));
+            const objectUpdate = new Float32Array([
+                ...flatten(newMVP),
+                ...flatten(identityMat), // invProj = identity for object
+                ...flatten(identityMat), // invViewRot = identity for object
+                projF,
+                aspectUniform,
+                0.0,
+                0.0,
+                ...flatten(eyeModelNew),  // eyePos (model-space)
+                1.0, 0.0, 0.0, 0.0        // reflective = true
+            ]);
+            device.queue.writeBuffer(objectUniformBuffer, 0, objectUpdate);
+            // update quad mtex (camera rotation inverse * invProjFull)
+            const invViewRotNew = invViewRotation(Vnew);
+            const quadUpdate = new Float32Array([
+                ...flatten(identityMat),
+                ...flatten(invProjFull),
+                ...flatten(invViewRotNew),
+                projFQuad,
+                aspectUniform,
+                1.0,
+                0.0,
+                eye[0], eye[1], eye[2], 1.0, // eyePos (world-space)
+                0.0, 0.0, 0.0, 0.0           // reflective = false
+            ]);
+            device.queue.writeBuffer(quadUniformBuffer, 0, quadUpdate);
+         } else {
+             // Object orbits around the origin; camera stays fixed
+             const eye = vec3(0, 0, 3); // original fixed eye
+             const alphaDeg = alpha * 180.0 / Math.PI;
+             const rotatedModel = mult(rotateY(alphaDeg), M);
+             const newMVP = mult(Mst, mult(P, mult(V, rotatedModel)));
+             // update object MVP using inverse of rotated model
+            const invMrot = inverse(rotatedModel);
+            const eyeModelNew = mult(invMrot, vec4(eye[0], eye[1], eye[2], 1.0));
+            const objectUpdate = new Float32Array([
+                ...flatten(newMVP),
+                ...flatten(identityMat), // invProj = identity for object
+                ...flatten(rotatedModel), // model->world rotation (used in shader to compute world-space normals)
+                projF,
+                aspectUniform,
+                0.0,
+                0.0,
+                ...flatten(eyeModelNew),  // eyePos (model-space)
+                1.0, 0.0, 0.0, 0.0        // reflective = true
+            ]);
+            device.queue.writeBuffer(objectUniformBuffer, 0, objectUpdate);
+            // Note: quad (background) uses the fixed camera; no update needed
+         }
      }
  
     // end of animate body: draw and schedule next frame
@@ -578,14 +606,31 @@ animate();
     const speedSlider = document.getElementById('orbitSpeedSlider');
     const speedValue = document.getElementById('orbitSpeedValue');
     if (speedSlider) {
-        // initialize slider to current speed
-        speedSlider.value = angularSpeed;
-        if (speedValue) speedValue.textContent = parseFloat(angularSpeed).toFixed(3);
+        // internal maximum angular speed (0..0.5) - increased so the orbit can run much faster
+        const internalMax = 0.5;
+        // derive display max from the slider element so HTML can change it freely
+        const displayMax = parseFloat(speedSlider.max) || 100;
+        // initialize slider to current speed (map internal 0..internalMax -> display 0..displayMax)
+        speedSlider.value = ((angularSpeed / internalMax) * displayMax).toFixed(0);
+        if (speedValue) speedValue.textContent = ((angularSpeed / internalMax) * displayMax).toFixed(0);
         speedSlider.addEventListener('input', (ev) => {
-            const v = parseFloat(ev.target.value);
-            if (!isNaN(v)) angularSpeed = v;
-            if (speedValue) speedValue.textContent = angularSpeed.toFixed(3);
+            const v = parseFloat(ev.target.value); // 0..displayMax
+            if (!isNaN(v)) angularSpeed = (v / displayMax) * internalMax; // convert display -> internal
+            if (speedValue) speedValue.textContent = v.toFixed(0);
         });
+    }
+    // Orbit mode select wiring (camera vs object orbit)
+    const orbitModeElem = document.getElementById('orbitMode');
+    if (orbitModeElem) {
+        try {
+            const saved = window.localStorage.getItem('orbitMode');
+            if (saved) orbitModeElem.value = saved;
+        } catch (e) { }
+        orbitCamera = (orbitModeElem.value === 'camera');
+        orbitModeElem.onchange = () => {
+            orbitCamera = (orbitModeElem.value === 'camera');
+            try { window.localStorage.setItem('orbitMode', orbitModeElem.value); } catch (e) { }
+        };
     }
     // If user changes selection, save it and reload the page to reinitialize with new model
     if (selElem) {

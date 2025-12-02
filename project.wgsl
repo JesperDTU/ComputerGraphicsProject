@@ -77,14 +77,26 @@ fn main_fs(@location(0) normal_in : vec3<f32>, @location(1) posModel : vec3<f32>
     // Compute view (incidence) vector in model-space using uploaded eyePos.
     // For objects where the CPU uploaded eye in model-space (object), this yields
     // the direction from the surface point to the eye in the same space as the normal.
-    let v = normalize(uniforms.eyePos.xyz - posModel);
-    // incident vector for reflect should point toward the surface: use -v
-    let incident = -v;
-    let r = normalize(reflect(incident, bumped_n));
-
-    // Choose reflection direction for reflective objects, otherwise use normal direction
-    let useReflect = uniforms.reflective.x > 0.5;
-    let sampleDir = select(bumped_n, r, useReflect);
+    var sampleDir : vec3<f32>;
+    if (uniforms.mode < 0.5) {
+        // Object path: transform normal and view-vector into world-space
+        let v = normalize(uniforms.eyePos.xyz - posModel);
+        let world_n = normalize((uniforms.invViewRot * vec4<f32>(bumped_n, 0.0)).xyz);
+        let world_v = normalize((uniforms.invViewRot * vec4<f32>(v, 0.0)).xyz);
+        // incident vector for reflect should point toward the surface: use -world_v
+        let incident = -world_v;
+        let r = normalize(reflect(incident, world_n));
+        // Choose reflection direction for reflective objects, otherwise use normal direction
+        let useReflect = uniforms.reflective.x > 0.5;
+        sampleDir = select(world_n, r, useReflect);
+    } else {
+        // Background path: normals are already in world-space
+        let v = normalize(uniforms.eyePos.xyz - posModel);
+        let incident = -v;
+        let r = normalize(reflect(incident, bumped_n));
+        let useReflect = uniforms.reflective.x > 0.5;
+        sampleDir = select(bumped_n, r, useReflect);
+    }
 
     // Sample base mip level (LOD 0) to avoid blurry mipmap selection
     let color_rgb : vec3<f32> = textureSampleLevel(CubeTexture, CubeSampler, sampleDir, 0.0).rgb;

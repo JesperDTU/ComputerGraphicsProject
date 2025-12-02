@@ -51,6 +51,12 @@
             margin-bottom: 8px;
             width: 100%;
         }
+        /* Make range sliders match the width of selects/buttons in the controls column */
+        .controls-column input[type='range'] {
+            display: block;
+            margin-bottom: 8px;
+            width: 100%;
+        }
         .controls-row {
             display: flex;
             gap: 8px;
@@ -65,9 +71,15 @@
         </div>
 
         <aside class="controls-column" aria-label="Controls">
-            <label for="orbitSpeedSlider">Orbit speed: <span id="orbitSpeedValue">0.005</span></label>
-            <input id="orbitSpeedSlider" type="range" min="0" max="0.1" step="0.001" value="0.005">
+            <label for="orbitSpeedSlider">Orbit speed: <span id="orbitSpeedValue">5</span></label>
+            <input id="orbitSpeedSlider" type="range" min="0" max="200" step="1" value="5">
 
+            <label for="orbitMode">Orbit Mode:</label>
+            <select id="orbitMode">
+                <option value="camera" selected>Camera orbits</option>
+                <option value="object">Object orbits</option>
+            </select>
+            
             <label for="objectSelect">Object:</label>
             <select id="objectSelect">
                 <option value="Sphere" selected>Sphere</option>
@@ -86,8 +98,6 @@
                 <option value="GreenHill">Green Hill</option>
                 <option value="Terrain">Terrain</option>
             </select>
-
-            <!-- Additional controls (if any) will appear below and be scrollable -->
         </aside>
     </div>
 
