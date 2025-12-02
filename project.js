@@ -297,10 +297,9 @@ async function main()
 
 
     // --- Orbiting setup ---
-    let orbitOn = true;
     let alpha = 0.0;
     const radius = 3.0;
-    const angularSpeed = 0.01;
+    let angularSpeed = 0.01;
 
 
 
@@ -530,8 +529,8 @@ async function main()
      }
  
      // animation loop
-     function animate() {
-     if (orbitOn) {
+    function animate() {
+    if (angularSpeed !== 0) {
          alpha += angularSpeed;
          const eye = vec3(radius * Math.sin(alpha), 0, radius * Math.cos(alpha));
          const at = vec3(0, 0, 0);
@@ -568,10 +567,26 @@ async function main()
         device.queue.writeBuffer(quadUniformBuffer, 0, quadUpdate);
      }
  
-     // --- Button event ---
-     document.getElementById("OrbitToggle").onclick = () => {
-         orbitOn = !orbitOn;
-     };
+    // end of animate body: draw and schedule next frame
+    draw();
+    requestAnimationFrame(animate);
+    }
+animate();
+
+    // --- Initialization-time event wiring (do not attach per-frame) ---
+    // Wire up orbit speed slider (live updates while dragging)
+    const speedSlider = document.getElementById('orbitSpeedSlider');
+    const speedValue = document.getElementById('orbitSpeedValue');
+    if (speedSlider) {
+        // initialize slider to current speed
+        speedSlider.value = angularSpeed;
+        if (speedValue) speedValue.textContent = parseFloat(angularSpeed).toFixed(3);
+        speedSlider.addEventListener('input', (ev) => {
+            const v = parseFloat(ev.target.value);
+            if (!isNaN(v)) angularSpeed = v;
+            if (speedValue) speedValue.textContent = angularSpeed.toFixed(3);
+        });
+    }
     // If user changes selection, save it and reload the page to reinitialize with new model
     if (selElem) {
         selElem.onchange = () => {
@@ -579,8 +594,4 @@ async function main()
             window.location.reload();
         };
     }
-    draw();
-    requestAnimationFrame(animate);
-    }
-animate();
 }
