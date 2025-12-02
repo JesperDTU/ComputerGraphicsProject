@@ -5,7 +5,7 @@ struct Uniforms {
     projF   : f32,         // f = 1 / tan(fovy/2)
     aspect  : f32,         // aspect ratio
     mode    : f32,         // 0 = object, 1 = background
-    _pad    : f32,
+    lod     : f32,         // LOD level for cube map sampling
     eyePos  : vec4<f32>,  // eye position (in model-space for objects where appropriate)
     reflective : vec4<f32>, // x>0.5 => reflective object
 };
@@ -86,7 +86,39 @@ fn main_fs(@location(0) normal_in : vec3<f32>, @location(1) posModel : vec3<f32>
     let useReflect = uniforms.reflective.x > 0.5;
     let sampleDir = select(bumped_n, r, useReflect);
 
-    // Sample base mip level (LOD 0) to avoid blurry mipmap selection
-    let color_rgb : vec3<f32> = textureSampleLevel(CubeTexture, CubeSampler, sampleDir, 0.0).rgb;
+    // If lod is near zero, sample normally. For positive lod values,
+    // perform a small multi-sample around the reflection direction to
+    // produce a view-independent blur (fallback when mipmaps are poor).
+    var color_rgb : vec3<f32>;
+    if (uniforms.lod <= 0.001) {
+        color_rgb = textureSampleLevel(CubeTexture, CubeSampler, sampleDir, 0.0).rgb;
+    } else {
+        // sample kernel in 2D disk (9 taps)
+        let kernel = array<vec2<f32>, 9>(
+            vec2<f32>(0.0, 0.0),
+            vec2<f32>(1.0, 0.0),
+            vec2<f32>(-1.0, 0.0),
+            vec2<f32>(0.0, 1.0),
+            vec2<f32>(0.0, -1.0),
+            vec2<f32>(0.7, 0.7),
+            vec2<f32>(-0.7, 0.7),
+            vec2<f32>(0.7, -0.7),
+            vec2<f32>(-0.7, -0.7)
+        );
+        // Build tangent/bitangent around the sample direction
+        let baseDir = sampleDir;
+        let upGuess = select(vec3<f32>(1.0, 0.0, 0.0), vec3<f32>(0.0, 1.0, 0.0), abs(baseDir.y) < 0.999);
+        let tangent = normalize(cross(upGuess, baseDir));
+        let bitangent = normalize(cross(baseDir, tangent));
+        var sum : vec3<f32> = vec3<f32>(0.0, 0.0, 0.0);
+        // scale factor controls angular spread; tune as desired
+        let spread = uniforms.lod * 0.25;
+        for (var i: u32 = 0u; i < 9u; i = i + 1u) {
+            let off = kernel[i] * spread;
+            let dir = normalize(baseDir + tangent * off.x + bitangent * off.y);
+            sum = sum + textureSampleLevel(CubeTexture, CubeSampler, dir, 0.0).rgb;
+        }
+        color_rgb = sum / 9.0;
+    }
     return vec4<f32>(color_rgb, 1.0);
 }

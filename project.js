@@ -33,6 +33,71 @@ async function loadTexture(device, url) {
     return texture;
 }
 
+// Generate mipmaps for a cubemap texture by rendering each face / mip level.
+// This is similar to the 2D generateMipmap helper but handles array layers.
+async function generateCubemapMipmaps(device, texture) {
+    if (texture.mipLevelCount <= 1) return;
+
+    const code = `
+        @group(0) @binding(0) var ourSampler: sampler;
+        @group(0) @binding(1) var ourTexture: texture_2d<f32>;
+
+        struct VSOutput {
+            @builtin(position) position: vec4<f32>;
+            @location(0) texcoord: vec2<f32>;
+        };
+
+        @vertex
+        fn main_vs(@builtin(vertex_index) vertexIndex : u32) -> VSOutput {
+            let pos = array<vec2<f32>, 4>(vec2<f32>(0.0,1.0), vec2<f32>(0.0,0.0), vec2<f32>(1.0,1.0), vec2<f32>(1.0,0.0));
+            var out: VSOutput;
+            let xy = pos[vertexIndex];
+            out.position = vec4<f32>(xy*2.0 - 1.0, 0.0, 1.0);
+            out.texcoord = vec2<f32>(xy.x, 1.0 - xy.y);
+            return out;
+        }
+
+        @fragment
+        fn main_fs(@location(0) texcoord: vec2<f32>) -> @location(0) vec4<f32> {
+            return textureSample(ourTexture, ourSampler, texcoord);
+        }
+    `;
+
+    const module = device.createShaderModule({ code });
+    const sampler = device.createSampler({ minFilter: 'linear' });
+    const pipeline = device.createRenderPipeline({
+        layout: 'auto',
+        vertex: { module, entryPoint: 'main_vs' },
+        fragment: { module, entryPoint: 'main_fs', targets: [{ format: texture.format }] },
+        primitive: { topology: 'triangle-strip' },
+    });
+
+    const encoder = device.createCommandEncoder();
+    const mipCount = texture.mipLevelCount;
+    // For each mip level > 0, for each face (array layer)
+    for (let level = 1; level < mipCount; ++level) {
+        for (let layer = 0; layer < 6; ++layer) {
+            const srcView = texture.createView({ baseMipLevel: level - 1, mipLevelCount: 1, baseArrayLayer: layer, arrayLayerCount: 1, dimension: '2d' });
+            const dstView = texture.createView({ baseMipLevel: level, mipLevelCount: 1, baseArrayLayer: layer, arrayLayerCount: 1, dimension: '2d' });
+            const bindGroup = device.createBindGroup({
+                layout: pipeline.getBindGroupLayout(0),
+                entries: [
+                    { binding: 0, resource: sampler },
+                    { binding: 1, resource: srcView },
+                ],
+            });
+            const pass = encoder.beginRenderPass({
+                colorAttachments: [{ view: dstView, loadOp: 'clear', storeOp: 'store' }]
+            });
+            pass.setPipeline(pipeline);
+            pass.setBindGroup(0, bindGroup);
+            pass.draw(4);
+            pass.end();
+        }
+    }
+    device.queue.submit([encoder.finish()]);
+}
+
 // Helper to load six images into a cube texture
 async function loadCubeTexture(device, urls) {
     // load all images
@@ -44,25 +109,35 @@ async function loadCubeTexture(device, urls) {
         imgs.push(img);
     }
     const w = imgs[0].width, h = imgs[0].height;
+    // compute mip levels and create texture with mipmaps
+    const mipLevels = numMipLevels(w, h);
 
     const texture = device.createTexture({
         size: [w, h, 6],
         format: "rgba8unorm",
         // Adding RENDER_ATTACHMENT so future render/copy/mipmap ops succeed
-        mipLevelCount: 1,
+        mipLevelCount: mipLevels,
         usage: GPUTextureUsage.TEXTURE_BINDING |
                GPUTextureUsage.COPY_DST |
                GPUTextureUsage.RENDER_ATTACHMENT
     });
 
-    // copy each face into the corresponding array layer
+    // copy each face into the corresponding array layer (level 0)
     for (let i = 0; i < imgs.length; ++i) {
         device.queue.copyExternalImageToTexture(
             { source: imgs[i], flipY: false },
             { texture: texture, origin: { x: 0, y: 0, z: i } },
             { width: w, height: h, depthOrArrayLayers: 1 }
-        );  
+        );
     }
+
+    // Generate mipmaps for the cubemap so LOD sampling works
+    // Try to generate mipmaps for the cube texture. The shared generateMipmap
+    // helper handles 2D textures; for cube textures we need to generate per-face
+    // mipmaps. Use a local helper below to do that.
+    await generateCubemapMipmaps(device, texture);
+    // expose mip level count for UI
+    texture._mipLevels = mipLevels;
 
     return texture;
 }
@@ -90,6 +165,7 @@ async function main()
     const wgslcode = await fetch(wgslfile, {cache: "reload"}).then(r => r.text());
     const wgsl = device.createShaderModule({ code: wgslcode });
 
+    
 
 
 
@@ -230,6 +306,8 @@ async function main()
     // Background uses fixed 90° as requested
     let projFQuad = computeProjF(90.0);
     const aspectUniform = aspect;
+    // current LOD used for cubemap sampling (controls blurriness)
+    let currentLod = 0.0;
     const objectInit = new Float32Array([
         ...flatten(MVP),           // mvp
         ...flatten(identityMat),   // invProj = identity for object (not used)
@@ -237,7 +315,7 @@ async function main()
         projF,                     // projF for object (unused for object path)
         aspectUniform,             // aspect
         0.0,                       // mode
-        0.0,                       // padding
+        currentLod,                // lod (controls blur for object)
         ...flatten(eyeModel4),     // eyePos (model-space)
         1.0, 0.0, 0.0, 0.0         // reflective vec4.x = 1 => reflective
     ]);
@@ -256,7 +334,7 @@ async function main()
         projFQuad,                 // projF (from bg slider)
         aspectUniform,             // aspect
         1.0,                       // mode
-        0.0,                      // padding
+        0.0,                      // lod (keep background crisp)
         eye[0], eye[1], eye[2], 1.0,// eyePos (world-space)
         0.0, 0.0, 0.0, 0.0         // reflective = false
     ]);
@@ -290,7 +368,7 @@ async function main()
 
 
     // --- Orbiting setup ---
-    let orbitOn = false;
+    let orbitOn = true;
     let alpha = 0.0;
     const radius = 3.0;
     const angularSpeed = 0.01;
@@ -396,7 +474,7 @@ async function main()
             addressModeW: 'clamp-to-edge',
             magFilter: 'linear',
             minFilter: 'linear',
-            mipmapFilter: 'nearest',
+            mipmapFilter: 'linear',
         });
         // recreate bind groups to point at the new cubemap texture
         // layout0, NormalSampler and NormalTexture are in scope below (they will be created before first call)
@@ -456,6 +534,31 @@ async function main()
     await updateEnvironment(initialEnv);
     if (envSelect) {
         envSelect.onchange = () => { updateEnvironment(envSelect.value); };
+    }
+
+    // Wire up the blur (LOD) slider UI if present. Slider controls
+    // the LOD used when sampling the cubemap for object reflections.
+    const blurSlider = document.getElementById('BlurSlider');
+    const blurValue = document.getElementById('BlurValue');
+    if (blurSlider) {
+        // set reasonable slider range based on available mip levels
+        const maxL = (CubeTexture && CubeTexture._mipLevels) ? Math.max(0, CubeTexture._mipLevels - 1) : 0;
+        blurSlider.min = 0;
+        blurSlider.max = maxL;
+        blurSlider.step = 0.1;
+        blurSlider.value = currentLod;
+        if (blurValue) blurValue.textContent = currentLod.toFixed(2);
+
+        blurSlider.oninput = (e) => {
+            const v = parseFloat(e.target.value);
+            currentLod = v;
+            if (blurValue) blurValue.textContent = currentLod.toFixed(2);
+            // write only the projF/aspect/mode/lod vec4 into the uniform buffer
+            // offset = (16+16+16) floats = 48 floats * 4 bytes = 192
+            const offsetBytes = 48 * 4;
+            const small = new Float32Array([projF, aspectUniform, 0.0, currentLod]);
+            device.queue.writeBuffer(objectUniformBuffer, offsetBytes, small);
+        };
     }
 
 
@@ -540,7 +643,7 @@ async function main()
             projF,
             aspectUniform,
             0.0,
-            0.0,
+            currentLod,
             ...flatten(eyeModelNew),  // eyePos (model-space)
             1.0, 0.0, 0.0, 0.0        // reflective = true
         ]);
