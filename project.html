@@ -1,0 +1,27 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <title>Project</title>
+    <script type="text/javascript" src="MV.js"></script>
+    <script type="text/javascript" src="genmipmap.js"></script>
+    <script type="text/javascript" src="OBJParser.js"></script>
+    <script type="text/javascript" src="OBJParser_wire.js"></script>
+    <script type="text/javascript" src="project.js"></script>
+</head>
+
+<body>
+    <div style="display: flex; justify-content: center;">
+        <canvas id="my-canvas" width="512" height="512"></canvas>
+    </div>
+
+    <div style="margin-top: 10px; display: flex; gap: 10px; justify-content: center;">
+        <label for="objectSelect" style="align-self: center;">Object:</label>
+        <select id="objectSelect">
+            <option value="monkey_with_hat">Monkey with hat</option>
+            <option value="Tree">Tree</option>
+        </select>
+        <button id="OrbitToggle">Orbit on/off</button>
+    </div>
+</body>
+
+</html>
