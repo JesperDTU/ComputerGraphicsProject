@@ -210,7 +210,6 @@ async function main()
         'Tree': 'Tree.obj',
         'Bunny': 'bunny.obj',
         'Donut': 'donut.obj',
-        'Cube': 'Cube.obj',
         'Sphere': 'Sphere.obj',
         'Teapot': 'teapot.obj',
     };
@@ -269,7 +268,6 @@ async function main()
         'Tree': { scale: 1, yOffset: -0.2 },
         'Bunny': { scale: 0.5, yOffset: -0.5 },
         'Donut': { scale: 0.7, yOffset: 0.0 },
-        'Cube': { scale: 0.2, yOffset: 0.0 },
         'Sphere': { scale: 0.5, yOffset: 0.0 },
         'Teapot': { scale: 0.2, yOffset: -0.4 },
     };
@@ -651,8 +649,7 @@ async function main()
                 camAlpha = Math.atan2(currentEye[0], currentEye[2]);
                 radius = Math.hypot(currentEye[0], currentEye[2]);
             } catch (e) { }
-            // debug
-            try { console.log('SWITCH -> CAMERA', { objAlpha, camAlpha, radius, currentEye }); } catch (e) {}
+            // debug removed
             try { window.localStorage.setItem('orbitMode', 'camera'); } catch (e) { }
             updateOrbitButtons();
         });
@@ -660,8 +657,7 @@ async function main()
     if (orbitObjectBtn) {
         orbitObjectBtn.addEventListener('click', () => {
             orbitCamera = false;
-            // debug
-            try { console.log('SWITCH -> OBJECT', { objAlpha, camAlpha, radius, currentEye }); } catch (e) {}
+            // debug removed
             try { window.localStorage.setItem('orbitMode', 'object'); } catch (e) { }
             updateOrbitButtons();
         });
@@ -778,7 +774,7 @@ async function main()
                const objectUpdate = new Float32Array([
                    ...flatten(newMVP),
                    ...flatten(identityMat), // invProj = identity for object
-                   ...flatten(rotatedModel), // model->world rotation for shader
+                   ...flatten(identityMat), // invViewRot should be identity for object path
                    projF,
                    aspectUniform,
                    0.0,
@@ -810,14 +806,17 @@ async function main()
              objAlpha += angularSpeed;
              const objAlphaDeg = objAlpha * 180.0 / Math.PI;
              const rotatedModel = mult(rotateY(objAlphaDeg), M);
-             const newMVP = mult(Mst, mult(P, mult(V, rotatedModel)));
+             // Recompute view matrix from the current camera position so switching
+             // between modes doesn't jump (V may be stale from initialization).
+             const Vcur = lookAt(currentEye, at, up);
+             const newMVP = mult(Mst, mult(P, mult(Vcur, rotatedModel)));
              // update object MVP using inverse of rotated model
             const invMrot = inverse(rotatedModel);
             const eyeModelNew = mult(invMrot, vec4(eye[0], eye[1], eye[2], 1.0));
             const objectUpdate = new Float32Array([
                 ...flatten(newMVP),
                 ...flatten(identityMat), // invProj = identity for object
-                ...flatten(rotatedModel), // model->world rotation (used in shader to compute world-space normals)
+                ...flatten(identityMat), // invViewRot should be identity for object path
                 projF,
                 aspectUniform,
                 0.0,
