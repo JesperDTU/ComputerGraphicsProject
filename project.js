@@ -33,71 +33,6 @@ async function loadTexture(device, url) {
     return texture;
 }
 
-// Generate mipmaps for a cubemap texture by rendering each face / mip level.
-// This is similar to the 2D generateMipmap helper but handles array layers.
-async function generateCubemapMipmaps(device, texture) {
-    if (texture.mipLevelCount <= 1) return;
-
-    const code = `
-        @group(0) @binding(0) var ourSampler: sampler;
-        @group(0) @binding(1) var ourTexture: texture_2d<f32>;
-
-        struct VSOutput {
-            @builtin(position) position: vec4<f32>;
-            @location(0) texcoord: vec2<f32>;
-        };
-
-        @vertex
-        fn main_vs(@builtin(vertex_index) vertexIndex : u32) -> VSOutput {
-            let pos = array<vec2<f32>, 4>(vec2<f32>(0.0,1.0), vec2<f32>(0.0,0.0), vec2<f32>(1.0,1.0), vec2<f32>(1.0,0.0));
-            var out: VSOutput;
-            let xy = pos[vertexIndex];
-            out.position = vec4<f32>(xy*2.0 - 1.0, 0.0, 1.0);
-            out.texcoord = vec2<f32>(xy.x, 1.0 - xy.y);
-            return out;
-        }
-
-        @fragment
-        fn main_fs(@location(0) texcoord: vec2<f32>) -> @location(0) vec4<f32> {
-            return textureSample(ourTexture, ourSampler, texcoord);
-        }
-    `;
-
-    const module = device.createShaderModule({ code });
-    const sampler = device.createSampler({ minFilter: 'linear' });
-    const pipeline = device.createRenderPipeline({
-        layout: 'auto',
-        vertex: { module, entryPoint: 'main_vs' },
-        fragment: { module, entryPoint: 'main_fs', targets: [{ format: texture.format }] },
-        primitive: { topology: 'triangle-strip' },
-    });
-
-    const encoder = device.createCommandEncoder();
-    const mipCount = texture.mipLevelCount;
-    // For each mip level > 0, for each face (array layer)
-    for (let level = 1; level < mipCount; ++level) {
-        for (let layer = 0; layer < 6; ++layer) {
-            const srcView = texture.createView({ baseMipLevel: level - 1, mipLevelCount: 1, baseArrayLayer: layer, arrayLayerCount: 1, dimension: '2d' });
-            const dstView = texture.createView({ baseMipLevel: level, mipLevelCount: 1, baseArrayLayer: layer, arrayLayerCount: 1, dimension: '2d' });
-            const bindGroup = device.createBindGroup({
-                layout: pipeline.getBindGroupLayout(0),
-                entries: [
-                    { binding: 0, resource: sampler },
-                    { binding: 1, resource: srcView },
-                ],
-            });
-            const pass = encoder.beginRenderPass({
-                colorAttachments: [{ view: dstView, loadOp: 'clear', storeOp: 'store' }]
-            });
-            pass.setPipeline(pipeline);
-            pass.setBindGroup(0, bindGroup);
-            pass.draw(4);
-            pass.end();
-        }
-    }
-    device.queue.submit([encoder.finish()]);
-}
-
 // Helper to load six images into a cube texture
 async function loadCubeTexture(device, urls) {
     // load all images
@@ -109,35 +44,25 @@ async function loadCubeTexture(device, urls) {
         imgs.push(img);
     }
     const w = imgs[0].width, h = imgs[0].height;
-    // compute mip levels and create texture with mipmaps
-    const mipLevels = numMipLevels(w, h);
 
     const texture = device.createTexture({
         size: [w, h, 6],
         format: "rgba8unorm",
         // Adding RENDER_ATTACHMENT so future render/copy/mipmap ops succeed
-        mipLevelCount: mipLevels,
+        mipLevelCount: 1,
         usage: GPUTextureUsage.TEXTURE_BINDING |
                GPUTextureUsage.COPY_DST |
                GPUTextureUsage.RENDER_ATTACHMENT
     });
 
-    // copy each face into the corresponding array layer (level 0)
+    // copy each face into the corresponding array layer
     for (let i = 0; i < imgs.length; ++i) {
         device.queue.copyExternalImageToTexture(
             { source: imgs[i], flipY: false },
             { texture: texture, origin: { x: 0, y: 0, z: i } },
             { width: w, height: h, depthOrArrayLayers: 1 }
-        );
+        );  
     }
-
-    // Generate mipmaps for the cubemap so LOD sampling works
-    // Try to generate mipmaps for the cube texture. The shared generateMipmap
-    // helper handles 2D textures; for cube textures we need to generate per-face
-    // mipmaps. Use a local helper below to do that.
-    await generateCubemapMipmaps(device, texture);
-    // expose mip level count for UI
-    texture._mipLevels = mipLevels;
 
     return texture;
 }
@@ -165,23 +90,26 @@ async function main()
     const wgslcode = await fetch(wgslfile, {cache: "reload"}).then(r => r.text());
     const wgsl = device.createShaderModule({ code: wgslcode });
 
-    
 
 
 
     // --- Load OBJ model ---
     // Read selection from HTML (default to monkey_with_hat)
     const selElem = document.getElementById('objectSelect');
-    const selectedObject = selElem ? selElem.value : 'monkey_with_hat';
+    // If the select exists but its value is empty (possible via saved localStorage),
+    // fall back to the default object name so we don't end up with ".obj".
+    const selectedObject = (selElem && selElem.value) ? selElem.value : 'monkey_with_hat';
     // Map selection to file name. Add new entries here to support more objects.
     const objectMap = {
         'monkey_with_hat': 'monkey_with_hat.obj',
         'Tree': 'Tree.obj',
-        // Example: 'bunny': 'bunny.obj',
+        'Bunny': 'bunny.obj',
+        'Donut': 'donut.obj',
+        'Cube': 'Cube.obj',
+        'Sphere': 'Sphere.obj',
     };
-    const objFile = objectMap[selectedObject] || (selectedObject + '.obj');
+    const objFile = objectMap[selectedObject] || (selectedObject ? (selectedObject + '.obj') : 'monkey_with_hat.obj');
     const mesh = await readOBJFile(objFile, 1.0, false);
-
     // mesh.vertices and mesh.normals are Float32Array with 4 floats per vertex
     const numVertices = mesh.vertices.length / 4;
 
@@ -233,7 +161,10 @@ async function main()
     const objectParams = {
         'monkey_with_hat': { scale: 0.5, yOffset: -0.3 },
         'Tree': { scale: 1, yOffset: -0.2 },
-        // Example: 'bunny': { scale: 1.2, yOffset: -0.4 },
+        'Bunny': { scale: 0.5, yOffset: -0.5 },
+        'Donut': { scale: 0.7, yOffset: 0.0 },
+        'Cube': { scale: 0.2, yOffset: 0.0 },
+        'Sphere': { scale: 0.5, yOffset: 0.0 },
     };
     const params = objectParams[selectedObject] || { scale: 1.0, yOffset: -0.6 };
     const M = mult(translate(0.0, params.yOffset, 0.0), scalem(params.scale, params.scale, params.scale));
@@ -306,8 +237,6 @@ async function main()
     // Background uses fixed 90° as requested
     let projFQuad = computeProjF(90.0);
     const aspectUniform = aspect;
-    // current LOD used for cubemap sampling (controls blurriness)
-    let currentLod = 0.0;
     const objectInit = new Float32Array([
         ...flatten(MVP),           // mvp
         ...flatten(identityMat),   // invProj = identity for object (not used)
@@ -315,7 +244,7 @@ async function main()
         projF,                     // projF for object (unused for object path)
         aspectUniform,             // aspect
         0.0,                       // mode
-        currentLod,                // lod (controls blur for object)
+        0.0,                       // padding
         ...flatten(eyeModel4),     // eyePos (model-space)
         1.0, 0.0, 0.0, 0.0         // reflective vec4.x = 1 => reflective
     ]);
@@ -334,7 +263,7 @@ async function main()
         projFQuad,                 // projF (from bg slider)
         aspectUniform,             // aspect
         1.0,                       // mode
-        0.0,                      // lod (keep background crisp)
+        0.0,                      // padding
         eye[0], eye[1], eye[2], 1.0,// eyePos (world-space)
         0.0, 0.0, 0.0, 0.0         // reflective = false
     ]);
@@ -368,10 +297,12 @@ async function main()
 
 
     // --- Orbiting setup ---
-    let orbitOn = true;
     let alpha = 0.0;
     const radius = 3.0;
-    const angularSpeed = 0.01;
+    let angularSpeed = 0.005;
+    // orbit mode: true => camera orbits (existing behavior),
+    // false => camera stays still and object orbits around origin
+    let orbitCamera = true;
 
 
 
@@ -474,7 +405,7 @@ async function main()
             addressModeW: 'clamp-to-edge',
             magFilter: 'linear',
             minFilter: 'linear',
-            mipmapFilter: 'linear',
+            mipmapFilter: 'nearest',
         });
         // recreate bind groups to point at the new cubemap texture
         // layout0, NormalSampler and NormalTexture are in scope below (they will be created before first call)
@@ -534,31 +465,6 @@ async function main()
     await updateEnvironment(initialEnv);
     if (envSelect) {
         envSelect.onchange = () => { updateEnvironment(envSelect.value); };
-    }
-
-    // Wire up the blur (LOD) slider UI if present. Slider controls
-    // the LOD used when sampling the cubemap for object reflections.
-    const blurSlider = document.getElementById('BlurSlider');
-    const blurValue = document.getElementById('BlurValue');
-    if (blurSlider) {
-        // set reasonable slider range based on available mip levels
-        const maxL = (CubeTexture && CubeTexture._mipLevels) ? Math.max(0, CubeTexture._mipLevels - 1) : 0;
-        blurSlider.min = 0;
-        blurSlider.max = maxL;
-        blurSlider.step = 0.1;
-        blurSlider.value = currentLod;
-        if (blurValue) blurValue.textContent = currentLod.toFixed(2);
-
-        blurSlider.oninput = (e) => {
-            const v = parseFloat(e.target.value);
-            currentLod = v;
-            if (blurValue) blurValue.textContent = currentLod.toFixed(2);
-            // write only the projF/aspect/mode/lod vec4 into the uniform buffer
-            // offset = (16+16+16) floats = 48 floats * 4 bytes = 192
-            const offsetBytes = 48 * 4;
-            const small = new Float32Array([projF, aspectUniform, 0.0, currentLod]);
-            device.queue.writeBuffer(objectUniformBuffer, offsetBytes, small);
-        };
     }
 
 
@@ -626,48 +532,106 @@ async function main()
      }
  
      // animation loop
-     function animate() {
-     if (orbitOn) {
+    function animate() {
+    if (angularSpeed !== 0) {
          alpha += angularSpeed;
-         const eye = vec3(radius * Math.sin(alpha), 0, radius * Math.cos(alpha));
-         const at = vec3(0, 0, 0);
-         const up = vec3(0, 1, 0);
-         const Vnew = lookAt(eye, at, up);
-         const newMVP = mult(Mst, mult(P, mult(Vnew, M)));
-         // update object MVP
-        const eyeModelNew = mult(invM, vec4(eye[0], eye[1], eye[2], 1.0));
-        const objectUpdate = new Float32Array([
-            ...flatten(newMVP),
-            ...flatten(identityMat), // invProj = identity for object
-            ...flatten(identityMat), // invViewRot = identity for object
-            projF,
-            aspectUniform,
-            0.0,
-            currentLod,
-            ...flatten(eyeModelNew),  // eyePos (model-space)
-            1.0, 0.0, 0.0, 0.0        // reflective = true
-        ]);
-        device.queue.writeBuffer(objectUniformBuffer, 0, objectUpdate);
-        // update quad mtex (camera rotation inverse * invProjFull)
-        const invViewRotNew = invViewRotation(Vnew);
-        const quadUpdate = new Float32Array([
-            ...flatten(identityMat),
-            ...flatten(invProjFull),
-            ...flatten(invViewRotNew),
-            projFQuad,
-            aspectUniform,
-            1.0,
-            0.0,
-            eye[0], eye[1], eye[2], 1.0, // eyePos (world-space)
-            0.0, 0.0, 0.0, 0.0           // reflective = false
-        ]);
-        device.queue.writeBuffer(quadUniformBuffer, 0, quadUpdate);
+         if (orbitCamera) {
+             // Camera orbits around the origin (existing behavior)
+             const eye = vec3(radius * Math.sin(alpha), 0, radius * Math.cos(alpha));
+             const at = vec3(0, 0, 0);
+             const up = vec3(0, 1, 0);
+             const Vnew = lookAt(eye, at, up);
+             const newMVP = mult(Mst, mult(P, mult(Vnew, M)));
+             // update object MVP
+            const eyeModelNew = mult(invM, vec4(eye[0], eye[1], eye[2], 1.0));
+            const objectUpdate = new Float32Array([
+                ...flatten(newMVP),
+                ...flatten(identityMat), // invProj = identity for object
+                ...flatten(identityMat), // invViewRot = identity for object
+                projF,
+                aspectUniform,
+                0.0,
+                0.0,
+                ...flatten(eyeModelNew),  // eyePos (model-space)
+                1.0, 0.0, 0.0, 0.0        // reflective = true
+            ]);
+            device.queue.writeBuffer(objectUniformBuffer, 0, objectUpdate);
+            // update quad mtex (camera rotation inverse * invProjFull)
+            const invViewRotNew = invViewRotation(Vnew);
+            const quadUpdate = new Float32Array([
+                ...flatten(identityMat),
+                ...flatten(invProjFull),
+                ...flatten(invViewRotNew),
+                projFQuad,
+                aspectUniform,
+                1.0,
+                0.0,
+                eye[0], eye[1], eye[2], 1.0, // eyePos (world-space)
+                0.0, 0.0, 0.0, 0.0           // reflective = false
+            ]);
+            device.queue.writeBuffer(quadUniformBuffer, 0, quadUpdate);
+         } else {
+             // Object orbits around the origin; camera stays fixed
+             const eye = vec3(0, 0, 3); // original fixed eye
+             const alphaDeg = alpha * 180.0 / Math.PI;
+             const rotatedModel = mult(rotateY(alphaDeg), M);
+             const newMVP = mult(Mst, mult(P, mult(V, rotatedModel)));
+             // update object MVP using inverse of rotated model
+            const invMrot = inverse(rotatedModel);
+            const eyeModelNew = mult(invMrot, vec4(eye[0], eye[1], eye[2], 1.0));
+            const objectUpdate = new Float32Array([
+                ...flatten(newMVP),
+                ...flatten(identityMat), // invProj = identity for object
+                ...flatten(rotatedModel), // model->world rotation (used in shader to compute world-space normals)
+                projF,
+                aspectUniform,
+                0.0,
+                0.0,
+                ...flatten(eyeModelNew),  // eyePos (model-space)
+                1.0, 0.0, 0.0, 0.0        // reflective = true
+            ]);
+            device.queue.writeBuffer(objectUniformBuffer, 0, objectUpdate);
+            // Note: quad (background) uses the fixed camera; no update needed
+         }
      }
  
-     // --- Button event ---
-     document.getElementById("OrbitToggle").onclick = () => {
-         orbitOn = !orbitOn;
-     };
+    // end of animate body: draw and schedule next frame
+    draw();
+    requestAnimationFrame(animate);
+    }
+animate();
+
+    // --- Initialization-time event wiring (do not attach per-frame) ---
+    // Wire up orbit speed slider (live updates while dragging)
+    const speedSlider = document.getElementById('orbitSpeedSlider');
+    const speedValue = document.getElementById('orbitSpeedValue');
+    if (speedSlider) {
+        // internal maximum angular speed (0..0.5) - increased so the orbit can run much faster
+        const internalMax = 0.5;
+        // derive display max from the slider element so HTML can change it freely
+        const displayMax = parseFloat(speedSlider.max) || 100;
+        // initialize slider to current speed (map internal 0..internalMax -> display 0..displayMax)
+        speedSlider.value = ((angularSpeed / internalMax) * displayMax).toFixed(0);
+        if (speedValue) speedValue.textContent = ((angularSpeed / internalMax) * displayMax).toFixed(0);
+        speedSlider.addEventListener('input', (ev) => {
+            const v = parseFloat(ev.target.value); // 0..displayMax
+            if (!isNaN(v)) angularSpeed = (v / displayMax) * internalMax; // convert display -> internal
+            if (speedValue) speedValue.textContent = v.toFixed(0);
+        });
+    }
+    // Orbit mode select wiring (camera vs object orbit)
+    const orbitModeElem = document.getElementById('orbitMode');
+    if (orbitModeElem) {
+        try {
+            const saved = window.localStorage.getItem('orbitMode');
+            if (saved) orbitModeElem.value = saved;
+        } catch (e) { }
+        orbitCamera = (orbitModeElem.value === 'camera');
+        orbitModeElem.onchange = () => {
+            orbitCamera = (orbitModeElem.value === 'camera');
+            try { window.localStorage.setItem('orbitMode', orbitModeElem.value); } catch (e) { }
+        };
+    }
     // If user changes selection, save it and reload the page to reinitialize with new model
     if (selElem) {
         selElem.onchange = () => {
@@ -675,8 +639,4 @@ async function main()
             window.location.reload();
         };
     }
-    draw();
-    requestAnimationFrame(animate);
-    }
-animate();
 }
