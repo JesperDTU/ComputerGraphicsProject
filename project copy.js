@@ -94,7 +94,7 @@ async function loadCubeTexture(device, urls) {
     if (texture.mipLevelCount > 1) {
         // Use the shader module already stored in `project.wgsl` by fetching it
         // (we're inside a top-level helper so we fetch the file here).
-        const mipWGSL = await fetch('project.wgsl', { cache: 'reload' }).then(r => r.text());
+        const mipWGSL = await fetch('project copy.wgsl', { cache: 'reload' }).then(r => r.text());
         const mipmodule = device.createShaderModule({ code: mipWGSL });
         const mipPipeline = device.createRenderPipeline({
             layout: 'auto',

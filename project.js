@@ -277,10 +277,11 @@ async function main()
     const M = mult(translate(0.0, params.yOffset, 0.0), scalem(params.scale, params.scale, params.scale));
 
     // Define view matrix (isometric view)
-    const eye = vec3(0, 0, 3);
+        // Keep the camera position in `currentEye` so switching modes is smooth
+        let currentEye = vec3(0, 0, 3);
     const at = vec3(0, 0, 0);
     const up = vec3(0, 1, 0);
-    const V = lookAt(eye, at, up);
+        const V = lookAt(currentEye, at, up);
 
     // Define projection matrix (use actual canvas aspect ratio)
     const aspect = canvas.width / canvas.height;
@@ -301,7 +302,7 @@ async function main()
     // inverse model matrix (used to transform eye into model-space for object)
     const invM = inverse(M);
     // eye in model-space (used by object shader path to compute view vector)
-    const eyeModel4 = mult(invM, vec4(eye[0], eye[1], eye[2], 1.0));
+    const eyeModel4 = mult(invM, vec4(currentEye[0], currentEye[1], currentEye[2], 1.0));
 
     // --- Uniform buffers ---
     const identityMat = mat4(
@@ -356,11 +357,10 @@ async function main()
         aspectUniform,             // aspect
         1.0,                       // mode
         0.0,                      // padding
-        eye[0], eye[1], eye[2], 1.0,// eyePos (world-space)
+           currentEye[0], currentEye[1], currentEye[2], 1.0,// eyePos (world-space)
         0.0, 0.0, 0.0, 0.0         // reflective = false
     ]);
     device.queue.writeBuffer(quadUniformBuffer, 0, quadInit);
-    // Debug output removed
     // More diagnostics: compute reconstructed directions for the quad corners
     const quadClips = [
         vec4(-1.0, -1.0, 0.999, 1.0),
@@ -385,11 +385,13 @@ async function main()
 
 
     // --- Orbiting setup ---
-    let alpha = 0.0;
-    const radius = 3.0;
+    // Separate angles for object and camera so they don't overwrite each other
+    let objAlpha = 0.0; // object rotation angle (radians)
+    // Initialize camera angle/radius from current eye position so mode switches start smoothly
+    let camAlpha = Math.atan2(currentEye[0], currentEye[2]);
+    let radius = Math.hypot(currentEye[0], currentEye[2]);
     let angularSpeed = 0.005;
-    // orbit mode: true => camera orbits (existing behavior),
-    // false => camera stays still and object orbits around origin
+    // orbit mode: true => camera orbits, false => object orbits
     let orbitCamera = true;
 
 
@@ -625,19 +627,47 @@ async function main()
             try { window.localStorage.setItem('orbitSpeed', v.toFixed(0)); } catch (e) { }
         });
     }
-    // Orbit mode select wiring (camera vs object orbit)
-    const orbitModeElem = document.getElementById('orbitMode');
-    if (orbitModeElem) {
-        try {
-            const saved = window.localStorage.getItem('orbitMode');
-            if (saved) orbitModeElem.value = saved;
-        } catch (e) { }
-        orbitCamera = (orbitModeElem.value === 'camera');
-        orbitModeElem.onchange = () => {
-            orbitCamera = (orbitModeElem.value === 'camera');
-            try { window.localStorage.setItem('orbitMode', orbitModeElem.value); } catch (e) { }
-        };
+    // Orbit mode wiring (Camera vs Object) using two buttons
+    const orbitCameraBtn = document.getElementById('orbitCameraBtn');
+    const orbitObjectBtn = document.getElementById('orbitObjectBtn');
+    try {
+        const saved = window.localStorage.getItem('orbitMode');
+        if (saved !== null) orbitCamera = (saved === 'camera');
+    } catch (e) { }
+    function updateOrbitButtons() {
+        if (orbitCameraBtn) {
+            if (orbitCamera) orbitCameraBtn.classList.add('active'); else orbitCameraBtn.classList.remove('active');
+        }
+        if (orbitObjectBtn) {
+            if (!orbitCamera) orbitObjectBtn.classList.add('active'); else orbitObjectBtn.classList.remove('active');
+        }
     }
+    if (orbitCameraBtn) {
+        orbitCameraBtn.addEventListener('click', () => {
+            orbitCamera = true;
+            // Recompute camAlpha/radius from the current camera world position so
+            // the camera orbit starts from wherever the camera currently is.
+            try {
+                camAlpha = Math.atan2(currentEye[0], currentEye[2]);
+                radius = Math.hypot(currentEye[0], currentEye[2]);
+            } catch (e) { }
+            // debug
+            try { console.log('SWITCH -> CAMERA', { objAlpha, camAlpha, radius, currentEye }); } catch (e) {}
+            try { window.localStorage.setItem('orbitMode', 'camera'); } catch (e) { }
+            updateOrbitButtons();
+        });
+    }
+    if (orbitObjectBtn) {
+        orbitObjectBtn.addEventListener('click', () => {
+            orbitCamera = false;
+            // debug
+            try { console.log('SWITCH -> OBJECT', { objAlpha, camAlpha, radius, currentEye }); } catch (e) {}
+            try { window.localStorage.setItem('orbitMode', 'object'); } catch (e) { }
+            updateOrbitButtons();
+        });
+    }
+    // initialize button state
+    updateOrbitButtons();
     // If user changes selection, save it and reload the page to reinitialize with new model
     if (selElem) {
         selElem.onchange = () => {
@@ -728,30 +758,35 @@ async function main()
      }
  
      // animation loop
-    function animate() {
-    if (angularSpeed !== 0) {
-         alpha += angularSpeed;
-         if (orbitCamera) {
-             // Camera orbits around the origin (existing behavior)
-             const eye = vec3(radius * Math.sin(alpha), 0, radius * Math.cos(alpha));
+        function animate() {
+        if (angularSpeed !== 0) {
+        if (orbitCamera) {
+            // Camera orbits around the origin (existing behavior)
+            // Use the current camera height so toggling modes preserves vertical position
+            camAlpha += angularSpeed;
+            const eye = vec3(radius * Math.sin(camAlpha), currentEye[1], radius * Math.cos(camAlpha));
              const at = vec3(0, 0, 0);
              const up = vec3(0, 1, 0);
              const Vnew = lookAt(eye, at, up);
-             const newMVP = mult(Mst, mult(P, mult(Vnew, M)));
-             // update object MVP
-            const eyeModelNew = mult(invM, vec4(eye[0], eye[1], eye[2], 1.0));
-            const objectUpdate = new Float32Array([
-                ...flatten(newMVP),
-                ...flatten(identityMat), // invProj = identity for object
-                ...flatten(identityMat), // invViewRot = identity for object
-                projF,
-                aspectUniform,
-                0.0,
-                0.0,
-                ...flatten(eyeModelNew),  // eyePos (model-space)
-                1.0, 0.0, 0.0, 0.0        // reflective = true
-            ]);
-            device.queue.writeBuffer(objectUniformBuffer, 0, objectUpdate);
+                // compute rotated model from object angle so object keeps its orientation when modes switch
+                const objAlphaDeg = objAlpha * 180.0 / Math.PI;
+                const rotatedModel = mult(rotateY(objAlphaDeg), M);
+                const newMVP = mult(Mst, mult(P, mult(Vnew, rotatedModel)));
+                // update object MVP
+               const invRotated = inverse(rotatedModel);
+               const eyeModelNew = mult(invRotated, vec4(eye[0], eye[1], eye[2], 1.0));
+               const objectUpdate = new Float32Array([
+                   ...flatten(newMVP),
+                   ...flatten(identityMat), // invProj = identity for object
+                   ...flatten(rotatedModel), // model->world rotation for shader
+                   projF,
+                   aspectUniform,
+                   0.0,
+                   0.0,
+                   ...flatten(eyeModelNew),  // eyePos (model-space)
+                   1.0, 0.0, 0.0, 0.0        // reflective = true
+               ]);
+               device.queue.writeBuffer(objectUniformBuffer, 0, objectUpdate);
             // update quad mtex (camera rotation inverse * invProjFull)
             const invViewRotNew = invViewRotation(Vnew);
             const quadUpdate = new Float32Array([
@@ -762,15 +797,19 @@ async function main()
                 aspectUniform,
                 1.0,
                 0.0,
-                eye[0], eye[1], eye[2], 1.0, // eyePos (world-space)
+                    eye[0], eye[1], eye[2], 1.0, // eyePos (world-space)
                 0.0, 0.0, 0.0, 0.0           // reflective = false
             ]);
             device.queue.writeBuffer(quadUniformBuffer, 0, quadUpdate);
+                // remember the camera position so mode switches can resume smoothly
+                currentEye = eye;
          } else {
              // Object orbits around the origin; camera stays fixed
-             const eye = vec3(0, 0, 3); // original fixed eye
-             const alphaDeg = alpha * 180.0 / Math.PI;
-             const rotatedModel = mult(rotateY(alphaDeg), M);
+                 const eye = currentEye; // preserve whatever camera position we have
+             // advance object rotation only when in object mode
+             objAlpha += angularSpeed;
+             const objAlphaDeg = objAlpha * 180.0 / Math.PI;
+             const rotatedModel = mult(rotateY(objAlphaDeg), M);
              const newMVP = mult(Mst, mult(P, mult(V, rotatedModel)));
              // update object MVP using inverse of rotated model
             const invMrot = inverse(rotatedModel);
