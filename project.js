@@ -1,13 +1,60 @@
 "use strict";
-window.onload = function() {
+
+// Restore UI state (reads localStorage and updates controls). Run on DOM ready.
+function restoreUIState() {
     // Restore previously chosen object (if any) so a reload keeps the selection
     const sel = document.getElementById('objectSelect');
     const saved = window.localStorage.getItem('selectedObject');
     if (sel && saved) {
         try { sel.value = saved; } catch (e) { /* ignore if option not present */ }
     }
-    main();
+    // Restore other UI state so switching objects preserves user choices
+    try {
+        const savedColor = window.localStorage.getItem('diffuseColor');
+        if (savedColor) {
+            const ci = document.getElementById('diffuseColor');
+            if (ci) ci.value = savedColor;
+        }
+        const savedEnv = window.localStorage.getItem('Environment');
+        if (savedEnv) {
+            const env = document.getElementById('Environment');
+            if (env) env.value = savedEnv;
+        }
+        const savedBlur = window.localStorage.getItem('blurLevel');
+        if (savedBlur) {
+            const bs = document.getElementById('blurSlider');
+            if (bs) bs.value = savedBlur;
+        }
+        const savedOrbit = window.localStorage.getItem('orbitSpeed');
+        if (savedOrbit) {
+            const ss = document.getElementById('orbitSpeedSlider');
+            if (ss) ss.value = savedOrbit;
+        }
+    } catch (e) { }
 }
+
+// Small math / utility helpers used by multiple places
+function invViewRotation(viewMat) {
+    const r00 = viewMat[0][0], r01 = viewMat[0][1], r02 = viewMat[0][2];
+    const r10 = viewMat[1][0], r11 = viewMat[1][1], r12 = viewMat[1][2];
+    const r20 = viewMat[2][0], r21 = viewMat[2][1], r22 = viewMat[2][2];
+    return mat4(
+        r00, r10, r20, 0.0,
+        r01, r11, r21, 0.0,
+        r02, r12, r22, 0.0,
+        0.0, 0.0, 0.0, 1.0
+    );
+}
+
+function normalizeVec(v) {
+    const l = Math.hypot(v[0], v[1], v[2]) || 1.0;
+    return [v[0]/l, v[1]/l, v[2]/l];
+}
+
+function computeProjF(deg) { return 1.0 / Math.tan(radians(deg) / 2.0); }
+
+// Start when DOM is ready
+document.addEventListener('DOMContentLoaded', () => { restoreUIState(); main(); });
 // Helper to load an image file into a WebGPU 2D texture
 async function loadTexture(device, url) {
     const response = await fetch(url);
@@ -224,7 +271,7 @@ async function main()
         'Donut': { scale: 0.7, yOffset: 0.0 },
         'Cube': { scale: 0.2, yOffset: 0.0 },
         'Sphere': { scale: 0.5, yOffset: 0.0 },
-        'Teapot': { scale: 0.3, yOffset: -0.5 },
+        'Teapot': { scale: 0.2, yOffset: -0.4 },
     };
     const params = objectParams[selectedObject] || { scale: 1.0, yOffset: -0.6 };
     const M = mult(translate(0.0, params.yOffset, 0.0), scalem(params.scale, params.scale, params.scale));
@@ -271,28 +318,13 @@ async function main()
     // Alternative ordering (try invMst * invP) in case correction ordering differs
     const invProjFullAlt = mult(invMst, invP);
 
-        
-    function invViewRotation(viewMat) {
-        const r00 = viewMat[0][0], r01 = viewMat[0][1], r02 = viewMat[0][2];
-        const r10 = viewMat[1][0], r11 = viewMat[1][1], r12 = viewMat[1][2];
-        const r20 = viewMat[2][0], r21 = viewMat[2][1], r22 = viewMat[2][2];
-        return mat4(
-            r00, r10, r20, 0.0,
-            r01, r11, r21, 0.0,
-            r02, r12, r22, 0.0,
-            0.0, 0.0, 0.0, 1.0
-        );
-    }
-
     const invViewRot = invViewRotation(V);
-
     // object uniform buffer: mvp, invProj (identity), invView (identity), mode = 0
     const objectUniformBuffer = device.createBuffer({
         size: 256,
         usage: GPUBufferUsage.UNIFORM | GPUBufferUsage.COPY_DST,
     });
     // projF = 1 / tan(fovy/2); aspect = canvas.width/canvas.height
-    function computeProjF(deg) { return 1.0 / Math.tan(radians(deg) / 2.0); }
     let projF = computeProjF(45.0); // object uses fixed 45° fov
     // Background uses fixed 90° as requested
     let projFQuad = computeProjF(90.0);
@@ -330,10 +362,6 @@ async function main()
     device.queue.writeBuffer(quadUniformBuffer, 0, quadInit);
     // Debug output removed
     // More diagnostics: compute reconstructed directions for the quad corners
-    function normalizeVec(v) {
-        const l = Math.hypot(v[0], v[1], v[2]) || 1.0;
-        return [v[0]/l, v[1]/l, v[2]/l];
-    }
     const quadClips = [
         vec4(-1.0, -1.0, 0.999, 1.0),
         vec4( 1.0, -1.0, 0.999, 1.0),
@@ -454,45 +482,7 @@ async function main()
         ];
     }
 
-    async function updateEnvironment(env) {
-        const folder = getCubemapFolderForEnv(env);
-        const urls = makeCubemapURLs(folder);
-        // load the 6 faces into a cube texture
-        const tex = await loadCubeTexture(device, urls);
-        CubeTexture = tex;
-        CubeSampler = device.createSampler({
-            addressModeU: 'clamp-to-edge',
-            addressModeV: 'clamp-to-edge',
-            addressModeW: 'clamp-to-edge',
-            magFilter: 'linear',
-            minFilter: 'linear',
-            mipmapFilter: 'linear',
-        });
-        // recreate bind groups to point at the new cubemap texture
-        // layout0, NormalSampler and NormalTexture are in scope below (they will be created before first call)
-        quadBindGroup = device.createBindGroup({
-            layout: layout0,
-            entries: [
-                { binding: 0, resource: { buffer: quadUniformBuffer } },
-                { binding: 1, resource: CubeSampler },
-                { binding: 2, resource: CubeTexture.createView({ dimension: 'cube' }) },
-                { binding: 3, resource: NormalSampler },
-                { binding: 4, resource: NormalTexture.createView() },
-                { binding: 5, resource: { buffer: diffuseUniformBuffer } },
-            ]
-        });
-        objectBindGroup = device.createBindGroup({
-            layout: layout0,
-            entries: [
-                { binding: 0, resource: { buffer: objectUniformBuffer } },
-                { binding: 1, resource: CubeSampler },
-                { binding: 2, resource: CubeTexture.createView({ dimension: 'cube' }) },
-                { binding: 3, resource: NormalSampler },
-                { binding: 4, resource: NormalTexture.createView() },
-                { binding: 5, resource: { buffer: diffuseUniformBuffer } },
-            ]
-        });
-    }
+    // NOTE: `updateEnvironment` relocated later so it can reference NormalTexture/NormalSampler/layout0
 
     // --- Create a neutral (flat) normal texture so the surface is smooth ---
     // This replaces the normal map to remove bumpiness. The pixel value
@@ -524,7 +514,47 @@ async function main()
         usage: GPUBufferUsage.UNIFORM | GPUBufferUsage.COPY_DST,
     });
     // initialize to white
-    device.queue.writeBuffer(diffuseUniformBuffer, 0, new Float32Array([1.0, 1.0, 1.0, 1.0]));
+    device.queue.writeBuffer(diffuseUniformBuffer, 0, new Float32Array([1.0, 1.0, 1.0, 0.5]));
+
+    // --- Environment update helper (defined after NormalTexture/NormalSampler/diffuse buffer exist)
+    async function updateEnvironment(env) {
+        const folder = getCubemapFolderForEnv(env);
+        const urls = makeCubemapURLs(folder);
+        // load the 6 faces into a cube texture
+        const tex = await loadCubeTexture(device, urls);
+        CubeTexture = tex;
+        CubeSampler = device.createSampler({
+            addressModeU: 'clamp-to-edge',
+            addressModeV: 'clamp-to-edge',
+            addressModeW: 'clamp-to-edge',
+            magFilter: 'linear',
+            minFilter: 'linear',
+            mipmapFilter: 'linear',
+        });
+        // recreate bind groups to point at the new cubemap texture
+        quadBindGroup = device.createBindGroup({
+            layout: layout0,
+            entries: [
+                { binding: 0, resource: { buffer: quadUniformBuffer } },
+                { binding: 1, resource: CubeSampler },
+                { binding: 2, resource: CubeTexture.createView({ dimension: 'cube' }) },
+                { binding: 3, resource: NormalSampler },
+                { binding: 4, resource: NormalTexture.createView() },
+                { binding: 5, resource: { buffer: diffuseUniformBuffer } },
+            ]
+        });
+        objectBindGroup = device.createBindGroup({
+            layout: layout0,
+            entries: [
+                { binding: 0, resource: { buffer: objectUniformBuffer } },
+                { binding: 1, resource: CubeSampler },
+                { binding: 2, resource: CubeTexture.createView({ dimension: 'cube' }) },
+                { binding: 3, resource: NormalSampler },
+                { binding: 4, resource: NormalTexture.createView() },
+                { binding: 5, resource: { buffer: diffuseUniformBuffer } },
+            ]
+        });
+    }
 
     // --- Two bind groups: one for background quad, one for object ---
     const layout0 = bindGroupLayout0;
@@ -535,7 +565,7 @@ async function main()
     const initialEnv = envSelect ? envSelect.value : 'Autumn';
     await updateEnvironment(initialEnv);
     if (envSelect) {
-        envSelect.onchange = () => { updateEnvironment(envSelect.value); };
+        envSelect.onchange = () => { try { window.localStorage.setItem('Environment', envSelect.value); } catch (e) {} ; updateEnvironment(envSelect.value); };
     }
 
 
@@ -577,13 +607,22 @@ async function main()
         const internalMax = 0.5;
         // derive display max from the slider element so HTML can change it freely
         const displayMax = parseFloat(speedSlider.max) || 100;
-        // initialize slider to current speed (map internal 0..internalMax -> display 0..displayMax)
-        speedSlider.value = ((angularSpeed / internalMax) * displayMax).toFixed(0);
-        if (speedValue) speedValue.textContent = ((angularSpeed / internalMax) * displayMax).toFixed(0);
+        // initialize slider to saved display value if present, otherwise use current speed
+        let savedDisplay = null;
+        try { savedDisplay = window.localStorage.getItem('orbitSpeed'); } catch (e) { savedDisplay = null; }
+        if (savedDisplay !== null) {
+            speedSlider.value = savedDisplay;
+            if (speedValue) speedValue.textContent = savedDisplay;
+            angularSpeed = (parseFloat(savedDisplay) / displayMax) * internalMax;
+        } else {
+            speedSlider.value = ((angularSpeed / internalMax) * displayMax).toFixed(0);
+            if (speedValue) speedValue.textContent = ((angularSpeed / internalMax) * displayMax).toFixed(0);
+        }
         speedSlider.addEventListener('input', (ev) => {
             const v = parseFloat(ev.target.value); // 0..displayMax
             if (!isNaN(v)) angularSpeed = (v / displayMax) * internalMax; // convert display -> internal
             if (speedValue) speedValue.textContent = v.toFixed(0);
+            try { window.localStorage.setItem('orbitSpeed', v.toFixed(0)); } catch (e) { }
         });
     }
     // Orbit mode select wiring (camera vs object orbit)
@@ -625,8 +664,19 @@ async function main()
             const hex = ev.target.value;
             const rgb = hexToRgbNormalized(hex);
             device.queue.writeBuffer(diffuseUniformBuffer, 0, new Float32Array([rgb[0], rgb[1], rgb[2], 1.0]));
+            try { window.localStorage.setItem('diffuseColor', hex); } catch (e) { }
         });
     }
+
+    // Persist blur slider changes so the value remains when switching objects
+    try {
+        const blurControl = document.getElementById('blurSlider');
+        if (blurControl) {
+            blurControl.addEventListener('input', (ev) => {
+                try { window.localStorage.setItem('blurLevel', ev.target.value); } catch (e) { }
+            });
+        }
+    } catch (e) { }
 
 
 

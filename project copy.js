@@ -6,6 +6,29 @@ window.onload = function() {
     if (sel && saved) {
         try { sel.value = saved; } catch (e) { /* ignore if option not present */ }
     }
+    // Restore other UI state so switching objects preserves user choices
+    try {
+        const savedColor = window.localStorage.getItem('diffuseColor');
+        if (savedColor) {
+            const ci = document.getElementById('diffuseColor');
+            if (ci) ci.value = savedColor;
+        }
+        const savedEnv = window.localStorage.getItem('Environment');
+        if (savedEnv) {
+            const env = document.getElementById('Environment');
+            if (env) env.value = savedEnv;
+        }
+        const savedBlur = window.localStorage.getItem('blurLevel');
+        if (savedBlur) {
+            const bs = document.getElementById('blurSlider');
+            if (bs) bs.value = savedBlur;
+        }
+        const savedOrbit = window.localStorage.getItem('orbitSpeed');
+        if (savedOrbit) {
+            const ss = document.getElementById('orbitSpeedSlider');
+            if (ss) ss.value = savedOrbit;
+        }
+    } catch (e) { }
     main();
 }
 // Helper to load an image file into a WebGPU 2D texture
@@ -49,7 +72,7 @@ async function loadCubeTexture(device, urls) {
         size: [w, h, 6],
         format: "rgba8unorm",
         // Adding RENDER_ATTACHMENT so future render/copy/mipmap ops succeed
-        mipLevelCount: 1,
+        mipLevelCount: numMipLevels(w, h),
         usage: GPUTextureUsage.TEXTURE_BINDING |
                GPUTextureUsage.COPY_DST |
                GPUTextureUsage.RENDER_ATTACHMENT
@@ -62,6 +85,64 @@ async function loadCubeTexture(device, urls) {
             { texture: texture, origin: { x: 0, y: 0, z: i } },
             { width: w, height: h, depthOrArrayLayers: 1 }
         );  
+    }
+
+    // Generate mipmaps for each cube face so LOD sampling (textureSampleLevel)
+    // can access higher, progressively-blurred mip levels.
+    // The shared `genmipmap.js` helper only handles 2D textures; generate
+    // per-face mipmaps here by rendering each face/mip as a 2D target.
+    if (texture.mipLevelCount > 1) {
+        // Use the shader module already stored in `project.wgsl` by fetching it
+        // (we're inside a top-level helper so we fetch the file here).
+        const mipWGSL = await fetch('project.wgsl', { cache: 'reload' }).then(r => r.text());
+        const mipmodule = device.createShaderModule({ code: mipWGSL });
+        const mipPipeline = device.createRenderPipeline({
+            layout: 'auto',
+            vertex: { module: mipmodule, entryPoint: 'mip_vs' },
+            fragment: { module: mipmodule, entryPoint: 'mip_fs', targets: [{ format: texture.format }] },
+            primitive: { topology: 'triangle-strip' },
+        });
+        const mipSampler = device.createSampler({ minFilter: 'linear' });
+
+        const encoder = device.createCommandEncoder();
+        const layers = 6; // cubemap has 6 faces (array layers)
+        for (let layer = 0; layer < layers; ++layer) {
+            for (let level = 1; level < texture.mipLevelCount; ++level) {
+                const srcView = texture.createView({
+                    dimension: '2d',
+                    baseMipLevel: level - 1,
+                    mipLevelCount: 1,
+                    baseArrayLayer: layer,
+                    arrayLayerCount: 1,
+                });
+                const dstView = texture.createView({
+                    dimension: '2d',
+                    baseMipLevel: level,
+                    mipLevelCount: 1,
+                    baseArrayLayer: layer,
+                    arrayLayerCount: 1,
+                });
+                const bindGroup = device.createBindGroup({
+                    layout: mipPipeline.getBindGroupLayout(1),
+                    entries: [
+                        { binding: 0, resource: mipSampler },
+                        { binding: 1, resource: srcView },
+                    ],
+                });
+                const pass = encoder.beginRenderPass({
+                    colorAttachments: [{
+                        view: dstView,
+                        loadOp: 'clear',
+                        storeOp: 'store',
+                    }]
+                });
+                pass.setPipeline(mipPipeline);
+                pass.setBindGroup(1, bindGroup);
+                pass.draw(4);
+                pass.end();
+            }
+        }
+        device.queue.submit([encoder.finish()]);
     }
 
     return texture;
@@ -166,7 +247,7 @@ async function main()
         'Donut': { scale: 0.7, yOffset: 0.0 },
         'Cube': { scale: 0.2, yOffset: 0.0 },
         'Sphere': { scale: 0.5, yOffset: 0.0 },
-        'Teapot': { scale: 0.3, yOffset: -0.5 },
+        'Teapot': { scale: 0.2, yOffset: -0.4 },
     };
     const params = objectParams[selectedObject] || { scale: 1.0, yOffset: -0.6 };
     const M = mult(translate(0.0, params.yOffset, 0.0), scalem(params.scale, params.scale, params.scale));
@@ -327,6 +408,7 @@ async function main()
             { binding: 2, visibility: GPUShaderStage.FRAGMENT, texture: { sampleType: 'float', viewDimension: 'cube' } },
             { binding: 3, visibility: GPUShaderStage.FRAGMENT, sampler: { type: 'filtering' } },
             { binding: 4, visibility: GPUShaderStage.FRAGMENT, texture: { sampleType: 'float', viewDimension: '2d' } },
+            { binding: 5, visibility: GPUShaderStage.FRAGMENT, buffer: { type: 'uniform' } },
         ]
     });
 
@@ -407,7 +489,7 @@ async function main()
             addressModeW: 'clamp-to-edge',
             magFilter: 'linear',
             minFilter: 'linear',
-            mipmapFilter: 'nearest',
+            mipmapFilter: 'linear',
         });
         // recreate bind groups to point at the new cubemap texture
         // layout0, NormalSampler and NormalTexture are in scope below (they will be created before first call)
@@ -419,6 +501,7 @@ async function main()
                 { binding: 2, resource: CubeTexture.createView({ dimension: 'cube' }) },
                 { binding: 3, resource: NormalSampler },
                 { binding: 4, resource: NormalTexture.createView() },
+                { binding: 5, resource: { buffer: diffuseUniformBuffer } },
             ]
         });
         objectBindGroup = device.createBindGroup({
@@ -429,6 +512,7 @@ async function main()
                 { binding: 2, resource: CubeTexture.createView({ dimension: 'cube' }) },
                 { binding: 3, resource: NormalSampler },
                 { binding: 4, resource: NormalTexture.createView() },
+                { binding: 5, resource: { buffer: diffuseUniformBuffer } },
             ]
         });
     }
@@ -457,6 +541,14 @@ async function main()
         mipmapFilter: 'linear',
     });
 
+    // --- Diffuse color uniform buffer (controlled by HTML color input) ---
+    const diffuseUniformBuffer = device.createBuffer({
+        size: 16, // vec4<f32>
+        usage: GPUBufferUsage.UNIFORM | GPUBufferUsage.COPY_DST,
+    });
+    // initialize to white
+    device.queue.writeBuffer(diffuseUniformBuffer, 0, new Float32Array([1.0, 1.0, 1.0, 1.0]));
+
     // --- Two bind groups: one for background quad, one for object ---
     const layout0 = bindGroupLayout0;
     // Load the initial environment and create bind groups. When the user
@@ -466,7 +558,7 @@ async function main()
     const initialEnv = envSelect ? envSelect.value : 'Autumn';
     await updateEnvironment(initialEnv);
     if (envSelect) {
-        envSelect.onchange = () => { updateEnvironment(envSelect.value); };
+        envSelect.onchange = () => { try { window.localStorage.setItem('Environment', envSelect.value); } catch (e) {} ; updateEnvironment(envSelect.value); };
     }
 
 
@@ -499,9 +591,104 @@ async function main()
     device.queue.writeBuffer(quadBuffer, 0, quadPositions);
 
 
+    // --- Initialization-time event wiring (do not attach per-frame) ---
+    // Wire up orbit speed slider (live updates while dragging)
+    const speedSlider = document.getElementById('orbitSpeedSlider');
+    const speedValue = document.getElementById('orbitSpeedValue');
+    if (speedSlider) {
+        // internal maximum angular speed (0..0.5) - increased so the orbit can run much faster
+        const internalMax = 0.5;
+        // derive display max from the slider element so HTML can change it freely
+        const displayMax = parseFloat(speedSlider.max) || 100;
+        // initialize slider to saved display value if present, otherwise use current speed
+        let savedDisplay = null;
+        try { savedDisplay = window.localStorage.getItem('orbitSpeed'); } catch (e) { savedDisplay = null; }
+        if (savedDisplay !== null) {
+            speedSlider.value = savedDisplay;
+            if (speedValue) speedValue.textContent = savedDisplay;
+            angularSpeed = (parseFloat(savedDisplay) / displayMax) * internalMax;
+        } else {
+            speedSlider.value = ((angularSpeed / internalMax) * displayMax).toFixed(0);
+            if (speedValue) speedValue.textContent = ((angularSpeed / internalMax) * displayMax).toFixed(0);
+        }
+        speedSlider.addEventListener('input', (ev) => {
+            const v = parseFloat(ev.target.value); // 0..displayMax
+            if (!isNaN(v)) angularSpeed = (v / displayMax) * internalMax; // convert display -> internal
+            if (speedValue) speedValue.textContent = v.toFixed(0);
+            try { window.localStorage.setItem('orbitSpeed', v.toFixed(0)); } catch (e) { }
+        });
+    }
+    // Orbit mode select wiring (camera vs object orbit)
+    const orbitModeElem = document.getElementById('orbitMode');
+    if (orbitModeElem) {
+        try {
+            const saved = window.localStorage.getItem('orbitMode');
+            if (saved) orbitModeElem.value = saved;
+        } catch (e) { }
+        orbitCamera = (orbitModeElem.value === 'camera');
+        orbitModeElem.onchange = () => {
+            orbitCamera = (orbitModeElem.value === 'camera');
+            try { window.localStorage.setItem('orbitMode', orbitModeElem.value); } catch (e) { }
+        };
+    }
+    // If user changes selection, save it and reload the page to reinitialize with new model
+    if (selElem) {
+        selElem.onchange = () => {
+            try { window.localStorage.setItem('selectedObject', selElem.value); } catch (e) { }
+            window.location.reload();
+        };
+    }
+
+    // Diffuse color input wiring: update the small uniform buffer when the user picks a color
+    const colorInput = document.getElementById('diffuseColor');
+    if (colorInput) {
+        function hexToRgbNormalized(hex) {
+            const v = (hex[0] === '#') ? hex.slice(1) : hex;
+            const r = parseInt(v.slice(0,2), 16) / 255.0;
+            const g = parseInt(v.slice(2,4), 16) / 255.0;
+            const b = parseInt(v.slice(4,6), 16) / 255.0;
+            return [r,g,b];
+        }
+        // write initial color
+        const initial = colorInput.value || '#ffffff';
+        const rgbInit = hexToRgbNormalized(initial);
+        device.queue.writeBuffer(diffuseUniformBuffer, 0, new Float32Array([rgbInit[0], rgbInit[1], rgbInit[2], 1.0]));
+        colorInput.addEventListener('input', (ev) => {
+            const hex = ev.target.value;
+            const rgb = hexToRgbNormalized(hex);
+            device.queue.writeBuffer(diffuseUniformBuffer, 0, new Float32Array([rgb[0], rgb[1], rgb[2], 1.0]));
+            try { window.localStorage.setItem('diffuseColor', hex); } catch (e) { }
+        });
+    }
+
+    // Persist blur slider changes so the value remains when switching objects
+    try {
+        const blurControl = document.getElementById('blurSlider');
+        if (blurControl) {
+            blurControl.addEventListener('input', (ev) => {
+                try { window.localStorage.setItem('blurLevel', ev.target.value); } catch (e) { }
+            });
+        }
+    } catch (e) { }
+
+
+
+
     // --- Render Pass ---
     // Draw function
     function draw() {
+        // --- UPDATE BLUR LEVEL UNIFORM ---------------------------------
+        // read slider
+        const blurSlider = document.getElementById("blurSlider");
+        const blurValue = parseFloat(blurSlider ? blurSlider.value : 0);
+
+        // write blur to object buffer (offset 240 bytes)
+        device.queue.writeBuffer(
+            objectUniformBuffer,
+            240,
+            new Float32Array([blurValue])
+        );
+        // ---------------------------------------------------------------
         const encoder = device.createCommandEncoder();
         const pass = encoder.beginRenderPass({
             colorAttachments: [{
@@ -602,43 +789,4 @@ async function main()
     requestAnimationFrame(animate);
     }
 animate();
-
-    // --- Initialization-time event wiring (do not attach per-frame) ---
-    // Wire up orbit speed slider (live updates while dragging)
-    const speedSlider = document.getElementById('orbitSpeedSlider');
-    const speedValue = document.getElementById('orbitSpeedValue');
-    if (speedSlider) {
-        // internal maximum angular speed (0..0.5) - increased so the orbit can run much faster
-        const internalMax = 0.5;
-        // derive display max from the slider element so HTML can change it freely
-        const displayMax = parseFloat(speedSlider.max) || 100;
-        // initialize slider to current speed (map internal 0..internalMax -> display 0..displayMax)
-        speedSlider.value = ((angularSpeed / internalMax) * displayMax).toFixed(0);
-        if (speedValue) speedValue.textContent = ((angularSpeed / internalMax) * displayMax).toFixed(0);
-        speedSlider.addEventListener('input', (ev) => {
-            const v = parseFloat(ev.target.value); // 0..displayMax
-            if (!isNaN(v)) angularSpeed = (v / displayMax) * internalMax; // convert display -> internal
-            if (speedValue) speedValue.textContent = v.toFixed(0);
-        });
-    }
-    // Orbit mode select wiring (camera vs object orbit)
-    const orbitModeElem = document.getElementById('orbitMode');
-    if (orbitModeElem) {
-        try {
-            const saved = window.localStorage.getItem('orbitMode');
-            if (saved) orbitModeElem.value = saved;
-        } catch (e) { }
-        orbitCamera = (orbitModeElem.value === 'camera');
-        orbitModeElem.onchange = () => {
-            orbitCamera = (orbitModeElem.value === 'camera');
-            try { window.localStorage.setItem('orbitMode', orbitModeElem.value); } catch (e) { }
-        };
-    }
-    // If user changes selection, save it and reload the page to reinitialize with new model
-    if (selElem) {
-        selElem.onchange = () => {
-            try { window.localStorage.setItem('selectedObject', selElem.value); } catch (e) { }
-            window.location.reload();
-        };
-    }
 }
