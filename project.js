@@ -385,6 +385,7 @@ async function main()
             { binding: 2, visibility: GPUShaderStage.FRAGMENT, texture: { sampleType: 'float', viewDimension: 'cube' } },
             { binding: 3, visibility: GPUShaderStage.FRAGMENT, sampler: { type: 'filtering' } },
             { binding: 4, visibility: GPUShaderStage.FRAGMENT, texture: { sampleType: 'float', viewDimension: '2d' } },
+            { binding: 5, visibility: GPUShaderStage.FRAGMENT, buffer: { type: 'uniform' } },
         ]
     });
 
@@ -477,6 +478,7 @@ async function main()
                 { binding: 2, resource: CubeTexture.createView({ dimension: 'cube' }) },
                 { binding: 3, resource: NormalSampler },
                 { binding: 4, resource: NormalTexture.createView() },
+                { binding: 5, resource: { buffer: diffuseUniformBuffer } },
             ]
         });
         objectBindGroup = device.createBindGroup({
@@ -487,6 +489,7 @@ async function main()
                 { binding: 2, resource: CubeTexture.createView({ dimension: 'cube' }) },
                 { binding: 3, resource: NormalSampler },
                 { binding: 4, resource: NormalTexture.createView() },
+                { binding: 5, resource: { buffer: diffuseUniformBuffer } },
             ]
         });
     }
@@ -514,6 +517,14 @@ async function main()
         minFilter: 'linear',
         mipmapFilter: 'linear',
     });
+
+    // --- Diffuse color uniform buffer (controlled by HTML color input) ---
+    const diffuseUniformBuffer = device.createBuffer({
+        size: 16, // vec4<f32>
+        usage: GPUBufferUsage.UNIFORM | GPUBufferUsage.COPY_DST,
+    });
+    // initialize to white
+    device.queue.writeBuffer(diffuseUniformBuffer, 0, new Float32Array([1.0, 1.0, 1.0, 1.0]));
 
     // --- Two bind groups: one for background quad, one for object ---
     const layout0 = bindGroupLayout0;
@@ -594,6 +605,27 @@ async function main()
             try { window.localStorage.setItem('selectedObject', selElem.value); } catch (e) { }
             window.location.reload();
         };
+    }
+
+    // Diffuse color input wiring: update the small uniform buffer when the user picks a color
+    const colorInput = document.getElementById('diffuseColor');
+    if (colorInput) {
+        function hexToRgbNormalized(hex) {
+            const v = (hex[0] === '#') ? hex.slice(1) : hex;
+            const r = parseInt(v.slice(0,2), 16) / 255.0;
+            const g = parseInt(v.slice(2,4), 16) / 255.0;
+            const b = parseInt(v.slice(4,6), 16) / 255.0;
+            return [r,g,b];
+        }
+        // write initial color
+        const initial = colorInput.value || '#ffffff';
+        const rgbInit = hexToRgbNormalized(initial);
+        device.queue.writeBuffer(diffuseUniformBuffer, 0, new Float32Array([rgbInit[0], rgbInit[1], rgbInit[2], 1.0]));
+        colorInput.addEventListener('input', (ev) => {
+            const hex = ev.target.value;
+            const rgb = hexToRgbNormalized(hex);
+            device.queue.writeBuffer(diffuseUniformBuffer, 0, new Float32Array([rgb[0], rgb[1], rgb[2], 1.0]));
+        });
     }
 
 

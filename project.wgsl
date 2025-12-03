@@ -16,6 +16,7 @@ struct Uniforms {
 @group(0) @binding(2) var CubeTexture : texture_cube<f32>;
 @group(0) @binding(3) var NormalSampler : sampler;
 @group(0) @binding(4) var NormalTexture : texture_2d<f32>;
+@group(0) @binding(5) var<uniform> diffuseColor : vec4<f32>;
 
 fn rotate_to_normal(n_in: vec3<f32>, v: vec3<f32>) -> vec3<f32> {
     let sgn_nz = sign(n_in.z + 1.0e-16);
@@ -101,7 +102,12 @@ fn main_fs(@location(0) normal_in : vec3<f32>, @location(1) posModel : vec3<f32>
 
     // Sample base mip level (LOD 0) to avoid blurry mipmap selection
     let color_rgb : vec3<f32> = textureSampleLevel(CubeTexture, CubeSampler, sampleDir, uniforms.blurLevel).rgb;
-    return vec4<f32>(color_rgb, 1.0);
+    // Apply user-controlled diffuse color only for object path (mode < 0.5)
+    var final_rgb : vec3<f32> = color_rgb;
+    if (uniforms.mode < 0.5) {
+        final_rgb = color_rgb * diffuseColor.rgb;
+    }
+    return vec4<f32>(final_rgb, 1.0);
 }
 
 // Mipmap generator entrypoints used by the JS loader to render
