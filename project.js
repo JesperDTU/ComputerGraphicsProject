@@ -206,12 +206,12 @@ async function main()
     const selectedObject = (selElem && selElem.value) ? selElem.value : 'monkey_with_hat';
     // Map selection to file name. Add new entries here to support more objects.
     const objectMap = {
-        'monkey_with_hat': 'monkey_with_hat.obj',
-        'Tree': 'Tree.obj',
-        'Bunny': 'bunny.obj',
-        'Donut': 'donut.obj',
-        'Sphere': 'Sphere.obj',
-        'Teapot': 'teapot.obj',
+        'monkey_with_hat': 'Objects/monkey_with_hat.obj',
+        'Tree': 'Objects/Tree.obj',
+        'Bunny': 'Objects/bunny.obj',
+        'Donut': 'Objects/donut.obj',
+        'Sphere': 'Objects/Sphere.obj',
+        'Teapot': 'Objects/teapot.obj',
     };
     const objFile = objectMap[selectedObject] || (selectedObject ? (selectedObject + '.obj') : 'monkey_with_hat.obj');
     const mesh = await readOBJFile(objFile, 1.0, false);
@@ -269,7 +269,7 @@ async function main()
         'Bunny': { scale: 0.5, yOffset: -0.5 },
         'Donut': { scale: 0.7, yOffset: 0.0 },
         'Sphere': { scale: 0.5, yOffset: 0.0 },
-        'Teapot': { scale: 0.2, yOffset: -0.4 },
+        'Teapot': { scale: 0.25, yOffset: -0.4 },
     };
     const params = objectParams[selectedObject] || { scale: 1.0, yOffset: -0.6 };
     const M = mult(translate(0.0, params.yOffset, 0.0), scalem(params.scale, params.scale, params.scale));
@@ -774,7 +774,7 @@ async function main()
                const objectUpdate = new Float32Array([
                    ...flatten(newMVP),
                    ...flatten(identityMat), // invProj = identity for object
-                   ...flatten(identityMat), // invViewRot should be identity for object path
+                   ...flatten(rotatedModel), // invViewRot: provide model->world rotation so reflections stay view-fixed
                    projF,
                    aspectUniform,
                    0.0,
@@ -816,7 +816,7 @@ async function main()
             const objectUpdate = new Float32Array([
                 ...flatten(newMVP),
                 ...flatten(identityMat), // invProj = identity for object
-                ...flatten(identityMat), // invViewRot should be identity for object path
+                ...flatten(rotatedModel), // invViewRot: provide model->world rotation so reflections stay view-fixed
                 projF,
                 aspectUniform,
                 0.0,
