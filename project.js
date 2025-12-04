@@ -207,7 +207,7 @@ async function main()
     // Map selection to file name. Add new entries here to support more objects.
     const objectMap = {
         'monkey_with_hat': 'Objects/monkey_with_hat.obj',
-        'Tree': 'Objects/Tree.obj',
+        //'Tree': 'Objects/Tree.obj',
         'Bunny': 'Objects/bunny.obj',
         'Donut': 'Objects/donut.obj',
         'Sphere': 'Objects/Sphere.obj',
@@ -265,7 +265,7 @@ async function main()
     // Per-object visual adjustments (scale/offset). Extend to support more objects.
     const objectParams = {
         'monkey_with_hat': { scale: 0.5, yOffset: -0.3 },
-        'Tree': { scale: 1, yOffset: -0.2 },
+        //'Tree': { scale: 1, yOffset: -0.2 },
         'Bunny': { scale: 0.5, yOffset: -0.5 },
         'Donut': { scale: 0.7, yOffset: 0.0 },
         'Sphere': { scale: 0.5, yOffset: 0.0 },
