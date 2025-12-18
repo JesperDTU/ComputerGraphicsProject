@@ -603,8 +603,8 @@ async function main()
     const speedSlider = document.getElementById('orbitSpeedSlider');
     const speedValue = document.getElementById('orbitSpeedValue');
     if (speedSlider) {
-        // internal maximum angular speed (0..0.5) - increased so the orbit can run much faster
-        const internalMax = 0.5;
+        // internal maximum angular speed (0..0.2) 
+        const internalMax = 0.2;
         // derive display max from the slider element so HTML can change it freely
         const displayMax = parseFloat(speedSlider.max) || 100;
         // initialize slider to saved display value if present, otherwise use current speed
