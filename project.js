@@ -1,6 +1,6 @@
 "use strict";
 
-// Restore UI state (reads localStorage and updates controls). Run on DOM ready.
+// Restore UI state (reads localStorage and updates controls)
 function restoreUIState() {
     // Restore previously chosen object (if any) so a reload keeps the selection
     const sel = document.getElementById('objectSelect');
@@ -33,7 +33,7 @@ function restoreUIState() {
     } catch (e) { }
 }
 
-// Small math / utility helpers used by multiple places
+// Small math / utility helpers
 function invViewRotation(viewMat) {
     const r00 = viewMat[0][0], r01 = viewMat[0][1], r02 = viewMat[0][2];
     const r10 = viewMat[1][0], r11 = viewMat[1][1], r12 = viewMat[1][2];
@@ -55,6 +55,7 @@ function computeProjF(deg) { return 1.0 / Math.tan(radians(deg) / 2.0); }
 
 // Start when DOM is ready
 document.addEventListener('DOMContentLoaded', () => { restoreUIState(); main(); });
+
 // Helper to load an image file into a WebGPU 2D texture
 async function loadTexture(device, url) {
     const response = await fetch(url);
@@ -82,7 +83,6 @@ async function loadTexture(device, url) {
 
 // Helper to load six images into a cube texture
 async function loadCubeTexture(device, urls) {
-    // load all images
     const imgs = [];
     for (let url of urls) {
         const resp = await fetch(url);
@@ -95,7 +95,6 @@ async function loadCubeTexture(device, urls) {
     const texture = device.createTexture({
         size: [w, h, 6],
         format: "rgba8unorm",
-        // Adding RENDER_ATTACHMENT so future render/copy/mipmap ops succeed
         mipLevelCount: numMipLevels(w, h),
         usage: GPUTextureUsage.TEXTURE_BINDING |
                GPUTextureUsage.COPY_DST |
@@ -199,15 +198,12 @@ async function main()
 
 
     // --- Load OBJ model ---
-    // Read selection from HTML (default to monkey_with_hat)
     const selElem = document.getElementById('objectSelect');
     // If the select exists but its value is empty (possible via saved localStorage),
     // fall back to the default object name so we don't end up with ".obj".
     const selectedObject = (selElem && selElem.value) ? selElem.value : 'monkey_with_hat';
-    // Map selection to file name. Add new entries here to support more objects.
     const objectMap = {
         'monkey_with_hat': 'Objects/monkey_with_hat.obj',
-        //'Tree': 'Objects/Tree.obj',
         'Bunny': 'Objects/bunny.obj',
         'Donut': 'Objects/donut.obj',
         'Sphere': 'Objects/Sphere.obj',
@@ -265,7 +261,6 @@ async function main()
     // Per-object visual adjustments (scale/offset). Extend to support more objects.
     const objectParams = {
         'monkey_with_hat': { scale: 0.5, yOffset: -0.3 },
-        //'Tree': { scale: 1, yOffset: -0.2 },
         'Bunny': { scale: 0.5, yOffset: -0.5 },
         'Donut': { scale: 0.7, yOffset: 0.0 },
         'Sphere': { scale: 0.5, yOffset: 0.0 },
@@ -275,18 +270,16 @@ async function main()
     const M = mult(translate(0.0, params.yOffset, 0.0), scalem(params.scale, params.scale, params.scale));
 
     // Define view matrix (isometric view)
-        // Keep the camera position in `currentEye` so switching modes is smooth
-        let currentEye = vec3(0, 0, 3);
+    let currentEye = vec3(0, 0, 3);
     const at = vec3(0, 0, 0);
     const up = vec3(0, 1, 0);
-        const V = lookAt(currentEye, at, up);
+    const V = lookAt(currentEye, at, up);
 
     // Define projection matrix (use actual canvas aspect ratio)
     const aspect = canvas.width / canvas.height;
     const P = perspective(45, aspect, 0.1, 10);  // 45° vertical field of view
     
     // Correction matrix for WebGPU's clip space
-        // The correction matrix ensures the OpenGL-style ortho matrices from MV.js produce the correct depth in WebGPU. Without it, the cube might vanish or render weirdly because z-values don’t land in [0,1].
     const Mst = mat4(
         1, 0, 0, 0,
         0, 1, 0, 0,
@@ -314,7 +307,7 @@ async function main()
     const invP = inverse(P);
     const invMst = inverse(Mst);
     const invProjFull = mult(invP, invMst);
-    // Alternative ordering (try invMst * invP) in case correction ordering differs
+    // Alternative ordering (invMst * invP) in case correction ordering differs
     const invProjFullAlt = mult(invMst, invP);
 
     const invViewRot = invViewRotation(V);
@@ -325,14 +318,14 @@ async function main()
     });
     // projF = 1 / tan(fovy/2); aspect = canvas.width/canvas.height
     let projF = computeProjF(45.0); // object uses fixed 45° fov
-    // Background uses fixed 90° as requested
+    // Background uses fixed 90° fov for wider view
     let projFQuad = computeProjF(90.0);
     const aspectUniform = aspect;
     const objectInit = new Float32Array([
         ...flatten(MVP),           // mvp
-        ...flatten(identityMat),   // invProj = identity for object (not used)
-        ...flatten(identityMat),   // invViewRot = identity for object
-        projF,                     // projF for object (unused for object path)
+        ...flatten(identityMat),   // invProj  
+        ...flatten(identityMat),   // invViewRot 
+        projF,                     // projF for object 
         aspectUniform,             // aspect
         0.0,                       // mode
         0.0,                       // padding
@@ -356,10 +349,9 @@ async function main()
         1.0,                       // mode
         0.0,                      // padding
            currentEye[0], currentEye[1], currentEye[2], 1.0,// eyePos (world-space)
-        0.0, 0.0, 0.0, 0.0         // reflective = false
+        0.0, 0.0, 0.0, 0.0         
     ]);
     device.queue.writeBuffer(quadUniformBuffer, 0, quadInit);
-    // More diagnostics: compute reconstructed directions for the quad corners
     const quadClips = [
         vec4(-1.0, -1.0, 0.999, 1.0),
         vec4( 1.0, -1.0, 0.999, 1.0),
@@ -373,7 +365,7 @@ async function main()
         const cam = [camH[0]/w, camH[1]/w, camH[2]/w];
         const dir4 = mult(invViewRot, vec4(cam[0], cam[1], cam[2], 0.0));
         const dir = normalizeVec([dir4[0], dir4[1], dir4[2]]);
-        // try alternative ordering
+        // or try alternative ordering
         const camHalt = mult(invProjFullAlt, clip);
         const walt = Math.max(Math.abs(camHalt[3]), 1e-6);
         const camalt = [camHalt[0]/walt, camHalt[1]/walt, camHalt[2]/walt];
@@ -405,7 +397,7 @@ async function main()
 
 
     
-    // --- Create an explicit bind group layout matching the WGSL bindings ---
+    // --- Create an explicit bind group layout ---
     const bindGroupLayout0 = device.createBindGroupLayout({
         entries: [
             { binding: 0, visibility: GPUShaderStage.VERTEX | GPUShaderStage.FRAGMENT, buffer: { type: 'uniform' } },
@@ -434,7 +426,7 @@ async function main()
 
     // Background pipeline: same shaders/layout but disable depth writes so
     // a quad at the far plane can be drawn reliably. Use less-equal so
-    // fragments at depth==1.0 are accepted.
+    // fragments at depth=1.0 are accepted.
     const bgPipeline = device.createRenderPipeline({
         layout: pipelineLayout,
         vertex: { module: wgsl, entryPoint: 'main_vs', buffers: [positionBufferLayout] },
@@ -449,14 +441,12 @@ async function main()
 
 
     // --- Load cubemap and create sampler ---
-    // We'll load the cubemap based on the `#Environment` select value.
     let CubeTexture = null;
     let CubeSampler = null;
     let quadBindGroup = null;
     let objectBindGroup = null;
 
     function getCubemapFolderForEnv(env) {
-        // Map the HTML select values to folder names under `cubemaps/`
         const map = {
             'Autumn': 'autumn_cubemap',
             'Brightday': 'brightday2_cubemap',
@@ -468,9 +458,7 @@ async function main()
     }
 
     function makeCubemapURLs(folder) {
-        // derive base name from folder (remove trailing '_cubemap')
         const base = folder.replace(/_cubemap$/i, '');
-        // Most folders use PNG, but cloudyhills uses JPG. Hardcode by folder.
         const ext = (folder === 'cloudyhills_cubemap') ? 'jpg' : 'png';
         return [
             `cubemaps/${folder}/${base}_posx.${ext}`,
@@ -513,10 +501,9 @@ async function main()
         size: 16, // vec4<f32>
         usage: GPUBufferUsage.UNIFORM | GPUBufferUsage.COPY_DST,
     });
-    // initialize to white
     device.queue.writeBuffer(diffuseUniformBuffer, 0, new Float32Array([1.0, 1.0, 1.0, 0.5]));
 
-    // --- Environment update helper (defined after NormalTexture/NormalSampler/diffuse buffer exist)
+    // --- Environment update helper 
     async function updateEnvironment(env) {
         const folder = getCubemapFolderForEnv(env);
         const urls = makeCubemapURLs(folder);
@@ -601,27 +588,18 @@ async function main()
     // --- Initialization-time event wiring (do not attach per-frame) ---
     // Wire up orbit speed slider (live updates while dragging)
     const speedSlider = document.getElementById('orbitSpeedSlider');
-    const speedValue = document.getElementById('orbitSpeedValue');
     if (speedSlider) {
-        // internal maximum angular speed (0..0.2) 
-        const internalMax = 0.2;
-        // derive display max from the slider element so HTML can change it freely
-        const displayMax = parseFloat(speedSlider.max) || 100;
-        // initialize slider to saved display value if present, otherwise use current speed
-        let savedDisplay = null;
-        try { savedDisplay = window.localStorage.getItem('orbitSpeed'); } catch (e) { savedDisplay = null; }
-        if (savedDisplay !== null) {
-            speedSlider.value = savedDisplay;
-            if (speedValue) speedValue.textContent = savedDisplay;
-            angularSpeed = (parseFloat(savedDisplay) / displayMax) * internalMax;
+        let savedSpeed = null;
+        try { savedSpeed = window.localStorage.getItem('orbitSpeed'); } catch (e) { savedSpeed = null; }
+        if (savedSpeed !== null) {
+            speedSlider.value = savedSpeed;
+            angularSpeed = parseFloat(savedSpeed);
         } else {
-            speedSlider.value = ((angularSpeed / internalMax) * displayMax).toFixed(0);
-            if (speedValue) speedValue.textContent = ((angularSpeed / internalMax) * displayMax).toFixed(0);
+            speedSlider.value = angularSpeed;
         }
         speedSlider.addEventListener('input', (ev) => {
-            const v = parseFloat(ev.target.value); // 0..displayMax
-            if (!isNaN(v)) angularSpeed = (v / displayMax) * internalMax; // convert display -> internal
-            if (speedValue) speedValue.textContent = v.toFixed(0);
+            const v = parseFloat(ev.target.value);
+            if (!isNaN(v)) angularSpeed = v;
             try { window.localStorage.setItem('orbitSpeed', v.toFixed(0)); } catch (e) { }
         });
     }
@@ -649,7 +627,6 @@ async function main()
                 camAlpha = Math.atan2(currentEye[0], currentEye[2]);
                 radius = Math.hypot(currentEye[0], currentEye[2]);
             } catch (e) { }
-            // debug removed
             try { window.localStorage.setItem('orbitMode', 'camera'); } catch (e) { }
             updateOrbitButtons();
         });
@@ -657,14 +634,12 @@ async function main()
     if (orbitObjectBtn) {
         orbitObjectBtn.addEventListener('click', () => {
             orbitCamera = false;
-            // debug removed
             try { window.localStorage.setItem('orbitMode', 'object'); } catch (e) { }
             updateOrbitButtons();
         });
     }
     // initialize button state
     updateOrbitButtons();
-    // If user changes selection, save it and reload the page to reinitialize with new model
     if (selElem) {
         selElem.onchange = () => {
             try { window.localStorage.setItem('selectedObject', selElem.value); } catch (e) { }
@@ -672,7 +647,7 @@ async function main()
         };
     }
 
-    // Diffuse color input wiring: update the small uniform buffer when the user picks a color
+    // Diffuse color input wiring
     const colorInput = document.getElementById('diffuseColor');
     if (colorInput) {
         function hexToRgbNormalized(hex) {
@@ -682,7 +657,6 @@ async function main()
             const b = parseInt(v.slice(4,6), 16) / 255.0;
             return [r,g,b];
         }
-        // write initial color
         const initial = colorInput.value || '#ffffff';
         const rgbInit = hexToRgbNormalized(initial);
         device.queue.writeBuffer(diffuseUniformBuffer, 0, new Float32Array([rgbInit[0], rgbInit[1], rgbInit[2], 1.0]));
@@ -710,18 +684,15 @@ async function main()
     // --- Render Pass ---
     // Draw function
     function draw() {
-        // --- UPDATE BLUR LEVEL UNIFORM ---------------------------------
-        // read slider
         const blurSlider = document.getElementById("blurSlider");
         const blurValue = parseFloat(blurSlider ? blurSlider.value : 0);
 
-        // write blur to object buffer (offset 240 bytes)
         device.queue.writeBuffer(
             objectUniformBuffer,
             240,
             new Float32Array([blurValue])
         );
-        // ---------------------------------------------------------------
+
         const encoder = device.createCommandEncoder();
         const pass = encoder.beginRenderPass({
             colorAttachments: [{
@@ -797,20 +768,16 @@ async function main()
                 0.0, 0.0, 0.0, 0.0           // reflective = false
             ]);
             device.queue.writeBuffer(quadUniformBuffer, 0, quadUpdate);
-                // remember the camera position so mode switches can resume smoothly
                 currentEye = eye;
          } else {
-             // Object orbits around the origin; camera stays fixed
                  const eye = currentEye; // preserve whatever camera position we have
-             // advance object rotation only when in object mode
              objAlpha += angularSpeed;
              const objAlphaDeg = objAlpha * 180.0 / Math.PI;
              const rotatedModel = mult(rotateY(objAlphaDeg), M);
              // Recompute view matrix from the current camera position so switching
-             // between modes doesn't jump (V may be stale from initialization).
+             // between modes doesn't jump the view.
              const Vcur = lookAt(currentEye, at, up);
              const newMVP = mult(Mst, mult(P, mult(Vcur, rotatedModel)));
-             // update object MVP using inverse of rotated model
             const invMrot = inverse(rotatedModel);
             const eyeModelNew = mult(invMrot, vec4(eye[0], eye[1], eye[2], 1.0));
             const objectUpdate = new Float32Array([
@@ -825,11 +792,9 @@ async function main()
                 1.0, 0.0, 0.0, 0.0        // reflective = true
             ]);
             device.queue.writeBuffer(objectUniformBuffer, 0, objectUpdate);
-            // Note: quad (background) uses the fixed camera; no update needed
          }
      }
  
-    // end of animate body: draw and schedule next frame
     draw();
     requestAnimationFrame(animate);
     }

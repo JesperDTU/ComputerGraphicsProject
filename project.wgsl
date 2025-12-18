@@ -29,8 +29,8 @@ fn rotate_to_normal(n_in: vec3<f32>, v: vec3<f32>) -> vec3<f32> {
 
 struct VSOut {
     @builtin(position) position : vec4<f32>,
-    @location(0) normal : vec3<f32>, // used as sample direction in fragment shader
-    @location(1) posModel : vec3<f32>, // model-space position for view-vector computation
+    @location(0) normal : vec3<f32>, 
+    @location(1) posModel : vec3<f32>, 
 };
 
 @vertex
@@ -41,9 +41,8 @@ fn main_vs(@location(0) inPos : vec4<f32>, @location(2) inNormal : vec3<f32>) ->
         out.normal   = inNormal;
         out.posModel = inPos.xyz;
     } else {
-        // background quad path: vertex positions are already clip-space coordinates (vec4)
         out.position = inPos;
-        // Reconstruct camera-space ray from NDC using fov/aspect (robust)
+        // Reconstruct camera-space ray from NDC using fov/aspect 
         let ndc = inPos.xy / inPos.w;
         let x_cam = ndc.x * uniforms.aspect / uniforms.projF;
         let y_cam = ndc.y / uniforms.projF;
@@ -97,7 +96,7 @@ fn main_fs(@location(0) normal_in : vec3<f32>, @location(1) posModel : vec3<f32>
     // Apply user-controlled diffuse color only for object path (mode < 0.5)
     var final_rgb : vec3<f32> = color_rgb;
     if (uniforms.mode < 0.5) {
-        // Change tint strength (0.0 = no tint, 1.0 = full multiply)
+        // Use tint strength 0.8 (0.0 = no tint, 1.0 = full multiply)
         let tint = mix(vec3<f32>(1.0), diffuseColor.rgb, 0.8);
         final_rgb = color_rgb * tint;
     }

@@ -54,7 +54,6 @@
         .controls-column button {
             margin-bottom: 8px;
         }
-        /* Make range sliders match the width of selects/buttons in the controls column */
         .controls-column input[type='range'] {
             display: block;
             margin-bottom: 8px;
@@ -88,7 +87,7 @@
 
         <aside class="controls-column" aria-label="Controls">
             <label for="orbitSpeedSlider">Orbit speed</label>
-            <input id="orbitSpeedSlider" type="range" min="0" max="100" step="1" value="5">
+            <input id="orbitSpeedSlider" type="range" min="0" max="0.2" step="0.01" value="0.05">
 
             <label for="orbitMode">Orbit Mode:</label>
             <div class="controls-row" id="orbitMode">
@@ -103,7 +102,6 @@
                 <option value="Teapot">Teapot</option>
                 <option value="monkey_with_hat">Party Monkey</option>
                 <option value="Bunny">Bunny</option>
-                <!--<option value="Tree">Tree</option>-->
             </select>
 
             <label for="blurSlider">Reflection blur:</label>
@@ -128,7 +126,6 @@
             const canvas = document.getElementById('my-canvas');
             const container = document.getElementById('canvas-container');
             if (!canvas || !container) return;
-            // Match the canvas backing store to the container size for crisp rendering
             const width = Math.max(1, container.clientWidth);
             const height = Math.max(1, container.clientHeight);
             if (canvas.width !== width || canvas.height !== height) {
