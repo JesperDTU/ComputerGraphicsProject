@@ -97,7 +97,9 @@ fn main_fs(@location(0) normal_in : vec3<f32>, @location(1) posModel : vec3<f32>
     // Apply user-controlled diffuse color only for object path (mode < 0.5)
     var final_rgb : vec3<f32> = color_rgb;
     if (uniforms.mode < 0.5) {
-        final_rgb = color_rgb * diffuseColor.rgb;
+        // Change tint strength (0.0 = no tint, 1.0 = full multiply)
+        let tint = mix(vec3<f32>(1.0), diffuseColor.rgb, 0.8);
+        final_rgb = color_rgb * tint;
     }
     return vec4<f32>(final_rgb, 1.0);
 }
