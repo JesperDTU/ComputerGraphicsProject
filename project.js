@@ -205,12 +205,17 @@ async function main()
     const objectMap = {
         'monkey_with_hat': 'Objects/monkey_with_hat.obj',
         'Bunny': 'Objects/bunny.obj',
-        'Donut': 'Objects/donut.obj',
+        'Donut': 'Objects/Donut.obj',
         'Sphere': 'Objects/Sphere.obj',
         'Teapot': 'Objects/teapot.obj',
     };
     const objFile = objectMap[selectedObject] || (selectedObject ? (selectedObject + '.obj') : 'monkey_with_hat.obj');
     const mesh = await readOBJFile(objFile, 1.0, false);
+    if (!mesh) {
+        console.error('Failed to load OBJ model', objFile);
+        alert('Could not load the selected object. Please choose a different one.');
+        return;
+    }
     // mesh.vertices and mesh.normals are Float32Array with 4 floats per vertex
     const numVertices = mesh.vertices.length / 4;
 
@@ -600,7 +605,7 @@ async function main()
         speedSlider.addEventListener('input', (ev) => {
             const v = parseFloat(ev.target.value);
             if (!isNaN(v)) angularSpeed = v;
-            try { window.localStorage.setItem('orbitSpeed', v.toFixed(0)); } catch (e) { }
+            try { window.localStorage.setItem('orbitSpeed', String(v)); } catch (e) { }
         });
     }
     // Orbit mode wiring (Camera vs Object) using two buttons
