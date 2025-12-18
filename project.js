@@ -562,9 +562,6 @@ async function main()
         });
     }
 
-
-
-
     // --- Render Pass ---
     // Draw function
     function draw() {
@@ -572,8 +569,6 @@ async function main()
         // read slider
         const blurSlider = document.getElementById("blurSlider");
         const blurValue = parseFloat(blurSlider ? blurSlider.value : 0);
-
-        // write blur to object buffer (offset 240 bytes)
         device.queue.writeBuffer(
             objectUniformBuffer,
             240,
